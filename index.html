@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#f9d5e5" />
+  <title>홋카이도 여행 🗺️</title>
+
+  <!-- Galmuri: 한글 픽셀 폰트 -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/quiple/galmuri/dist/galmuri.css" />
+
+  <!-- Leaflet (무료 지도) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- SortableJS (드래그앤드롭) -->
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- 상단 지도 -->
+  <div id="map"></div>
+
+  <!-- 지도 위 범례 -->
+  <div id="legend" class="legend"></div>
+
+  <!-- 하단 시트 -->
+  <div id="sheet" class="sheet">
+    <div class="sheet-handle"></div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="plan">📅 일정</button>
+      <button class="tab" data-tab="candidates">📌 가고싶은 곳</button>
+      <button class="tab" data-tab="settle">💰 정산</button>
+    </div>
+
+    <!-- 날짜 필터 -->
+    <div id="dayFilter" class="day-filter"></div>
+
+    <!-- 일정 탭 -->
+    <div id="tab-plan" class="tab-panel active"></div>
+
+    <!-- 후보 탭 -->
+    <div id="tab-candidates" class="tab-panel">
+      <form id="candForm" class="cand-form">
+        <input id="candName" placeholder="장소 이름 (예: 스프카레 맛집)" required />
+        <div class="cand-form-row">
+          <select id="candType">
+            <option value="food">🍜 맛집</option>
+            <option value="cafe">☕ 카페</option>
+            <option value="shopping">🛍️ 쇼핑</option>
+            <option value="sight">🏔️ 관광</option>
+            <option value="night">🌃 야경</option>
+          </select>
+          <input id="candNote" placeholder="메모 (선택)" />
+        </div>
+        <button type="submit">+ 후보 올리기</button>
+        <p class="hint">지도를 길게 눌러 위치를 먼저 찍으면 핀 위치도 저장돼요.</p>
+      </form>
+      <div id="candList" class="cand-list"></div>
+    </div>
+
+    <!-- 정산 탭 -->
+    <div id="tab-settle" class="tab-panel"></div>
+  </div>
+
+  <div id="syncStatus" class="sync-status">저장 준비 중…</div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
