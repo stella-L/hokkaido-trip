@@ -489,6 +489,12 @@ function renderSettle() {
     : `<div class="exp-hint">${state.expenses.length ? "정산 완료! 보낼 돈이 없어요 🎉" : "지출을 입력하면 정산안이 나와요"}</div>`;
 
   el.innerHTML = `
+    <div class="settle-box rate-box">
+      <div class="settle-title">💱 정산 환율</div>
+      <div class="rate-row">¥1 = ₩<input id="rateInput" type="number" step="0.1" value="${state.krwRate}" /></div>
+      <div class="rate-hint">이 환율 기준으로 모든 원화 환산·정산이 계산돼요</div>
+    </div>
+
     <div class="settle-box">
       <div class="settle-title">👥 멤버</div>
       <div class="mem-chips">${chips}</div>
@@ -507,11 +513,6 @@ function renderSettle() {
     <div class="settle-box">
       <div class="settle-title">💸 이렇게 보내면 끝!</div>
       ${transferHtml}
-    </div>
-
-    <div class="settle-box">
-      <div class="settle-title">🇯🇵→🇰🇷 환율</div>
-      <div class="rate-row">¥1 = ₩<input id="rateInput" type="number" step="0.1" value="${state.krwRate}" /></div>
     </div>`;
 
   // 멤버 추가

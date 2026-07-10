@@ -305,8 +305,10 @@ html, body {
   background: var(--panel-2); border: 2px solid var(--ink); padding: 9px 11px; margin-bottom: 7px;
 }
 .transfer .tr-amt { margin-left: auto; font-weight: bold; color: #e0568a; }
-.rate-row { font-size: 13px; display: flex; align-items: center; gap: 6px; }
-.rate-row input { width: 80px; font-family: inherit; font-size: 13px; color: var(--ink); background: var(--panel-2); border: 2px solid var(--ink); padding: 6px; }
+.rate-box { background: var(--cream); }
+.rate-row { font-size: 15px; font-weight: bold; display: flex; align-items: center; gap: 6px; }
+.rate-row input { width: 90px; font-family: inherit; font-size: 15px; font-weight: bold; color: var(--ink); background: #fff; border: 2px solid var(--ink); padding: 7px; }
+.rate-hint { font-size: 10px; color: #a08a5a; margin-top: 7px; }
 
 /* 데스크탑 */
 @media (min-width: 820px) {
