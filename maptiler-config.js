@@ -9,7 +9,7 @@
 //   3) 아래 null 을 지우고 "키값" 붙여넣기
 // ─────────────────────────────────────────────────────────────
 
-export const MAPTILER_KEY = null;
+export const MAPTILER_KEY = "vwERAFyfCRLPdZgnWQkj";
 
 // 라벨 언어: "latin"(로마자, 커버리지 완전) | "ko"(한국어 우선) | "ja"(일본어)
 export const MAP_LANG = "latin";
