@@ -263,8 +263,9 @@ html, body {
   width: 100%; font-family: inherit; font-size: 12px; color: var(--ink);
   background: var(--panel-2); border: 2px solid var(--ink); padding: 8px;
 }
-.exp-form .exp-amount { flex: 1; }
-.exp-form .exp-payer-sel { flex: 0 0 42%; }
+.exp-form .exp-amount, .exp-form .exp-amount-krw { flex: 1; }
+.exp-form .exp-payer-sel { margin-bottom: 7px; }
+.exp-conv { font-size: 10px; color: #a07fb8; margin: -2px 0 7px; }
 .exp-memo-in { margin-bottom: 7px; }
 .pt-label { font-size: 10px; color: #8a7c9a; margin-bottom: 4px; }
 .pt-checks { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }

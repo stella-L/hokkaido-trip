@@ -238,9 +238,11 @@ function expenseSection(day) {
     form = `
       <div class="exp-form" data-day="${day.id}">
         <div class="exp-form-row">
-          <input type="number" class="exp-amount" placeholder="금액(¥)" inputmode="numeric" />
-          <select class="exp-payer-sel">${opts}</select>
+          <input type="number" class="exp-amount" placeholder="금액 (¥)" inputmode="numeric" />
+          <input type="number" class="exp-amount-krw" placeholder="금액 (₩)" inputmode="numeric" />
         </div>
+        <div class="exp-conv">¥·₩ 아무거나 입력하면 자동 환산돼요 (¥1=₩${state.krwRate})</div>
+        <select class="exp-payer-sel">${opts}</select>
         <input type="text" class="exp-memo-in" placeholder="메모 (예: 저녁 스시)" />
         <div class="pt-label">나눠 낼 사람</div>
         <div class="pt-checks">${checks}</div>
@@ -334,6 +336,15 @@ function renderPlan() {
   el.querySelectorAll(".exp-cancel").forEach((b) => {
     b.onclick = () => { expFormDay = null; renderPlan(); };
   });
+  // ¥ ↔ ₩ 자동 환산
+  const openForm = el.querySelector(".exp-form");
+  if (openForm) {
+    const yenIn = openForm.querySelector(".exp-amount");
+    const wonIn = openForm.querySelector(".exp-amount-krw");
+    const rate = state.krwRate || 9;
+    yenIn.oninput = () => { wonIn.value = yenIn.value ? Math.round(Number(yenIn.value) * rate) : ""; };
+    wonIn.oninput = () => { yenIn.value = wonIn.value ? Math.round(Number(wonIn.value) / rate) : ""; };
+  }
   // 지출: 저장
   el.querySelectorAll(".exp-save").forEach((b) => {
     b.onclick = () => {
