@@ -11,17 +11,15 @@
 //   4) 아래 null 을 지우고 붙여넣기
 // ─────────────────────────────────────────────────────────────
 
-export const firebaseConfig = null;
-
-// 예시 ↓ (위 null 을 지우고 이런 형태로 채우세요)
-// export const firebaseConfig = {
-//   apiKey: "AIza...",
-//   authDomain: "hokkaido-trip.firebaseapp.com",
-//   projectId: "hokkaido-trip",
-//   storageBucket: "hokkaido-trip.appspot.com",
-//   messagingSenderId: "1234567890",
-//   appId: "1:1234567890:web:abcdef",
-// };
+export const firebaseConfig = {
+  apiKey: "AIzaSyDQxxAAT3pnhr4T8Q7L7MlOl9AEQhnkHo0",
+  authDomain: "trip-jp-a3050.firebaseapp.com",
+  projectId: "trip-jp-a3050",
+  storageBucket: "trip-jp-a3050.firebasestorage.app",
+  messagingSenderId: "354078223537",
+  appId: "1:354078223537:web:295adfd6a83dbe013bc690",
+  measurementId: "G-JJ2XXQ4D0R",
+};
 
 // 여러 여행/그룹을 구분하는 문서 키 (친구끼리 같은 값이어야 같은 일정 공유)
 export const TRIP_ID = "hokkaido-2026-07";
