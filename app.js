@@ -1,5 +1,6 @@
 import { TYPES, PLACES, DAYS, CANDIDATES, MEMBERS, EXPENSES, JPY_TO_KRW } from "./seed-data.js";
 import { firebaseConfig, TRIP_ID } from "./firebase-config.js";
+import { MAPTILER_KEY, MAP_LANG } from "./maptiler-config.js";
 
 // ───────────────────────── 상태 ─────────────────────────
 let state = {
@@ -21,92 +22,143 @@ let myName = localStorage.getItem("trip_name") || "";
 let activeDay = null;        // 선택된 날짜 id (null = 전체)
 const hiddenTypes = new Set(); // 숨긴 핀 종류
 
-// ───────────────────────── 지도 ─────────────────────────
-const map = L.map("map", { zoomControl: false }).setView([43.2, 141.6], 8);
-L.control.zoom({ position: "bottomright" }).addTo(map);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  attribution: "© OpenStreetMap",
-  maxZoom: 18,
-}).addTo(map);
+// ───────────────────────── 지도 (MapLibre) ─────────────────────────
+// 무료 OSM 래스터 스타일 (MapTiler 키 없을 때 폴백)
+const OSM_STYLE = {
+  version: 8,
+  sources: {
+    osm: {
+      type: "raster",
+      tiles: [
+        "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      ],
+      tileSize: 256,
+      attribution: "© OpenStreetMap",
+    },
+  },
+  layers: [{ id: "osm", type: "raster", source: "osm" }],
+};
 
-let markerLayer = L.layerGroup().addTo(map);
-let routeLayer = L.layerGroup().addTo(map);
+const useMaptiler = !!MAPTILER_KEY;
+const map = new maplibregl.Map({
+  container: "map",
+  style: useMaptiler
+    ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`
+    : OSM_STYLE,
+  center: [141.6, 43.2],
+  zoom: 6.5,
+  attributionControl: false,
+});
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
+map.addControl(new maplibregl.AttributionControl({ compact: true }));
+
+let markers = [];            // 현재 표시중인 마커
 let pendingLatLng = null;    // 후보 등록용 길게-누른 좌표
 let pendingMarker = null;
+let mapReady = false;
+
+map.on("load", () => {
+  if (useMaptiler) applyMapLanguage();   // 라벨 로마자/한국어로
+  map.addSource("routes", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  map.addLayer({
+    id: "routes", type: "line", source: "routes",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": "#38bdf8", "line-width": 3, "line-dasharray": [2, 2], "line-opacity": 0.85 },
+  });
+  mapReady = true;
+  renderMap();
+});
+
+// MapTiler 벡터 라벨을 원하는 언어로 치환
+function applyMapLanguage() {
+  const field = MAP_LANG === "latin"
+    ? ["coalesce", ["get", "name:latin"], ["get", "name:nonlatin"], ["get", "name"]]
+    : ["coalesce", ["get", `name:${MAP_LANG}`], ["get", "name:latin"], ["get", "name"]];
+  (map.getStyle().layers || []).forEach((l) => {
+    if (l.type === "symbol" && l.layout && l.layout["text-field"]) {
+      try { map.setLayoutProperty(l.id, "text-field", field); } catch (e) {}
+    }
+  });
+}
 
 // 지도 길게 누르기 → 후보 위치 지정
-map.on("contextmenu", (e) => setPending(e.latlng));
+map.on("contextmenu", (e) => setPending(e.lngLat));
 let pressTimer;
-map.on("mousedown touchstart", (e) => {
-  pressTimer = setTimeout(() => setPending(e.latlng), 550);
-});
-map.on("mouseup touchend mousemove dragstart", () => clearTimeout(pressTimer));
+map.on("touchstart", (e) => { pressTimer = setTimeout(() => setPending(e.lngLat), 550); });
+["touchend", "touchmove", "movestart"].forEach((ev) => map.on(ev, () => clearTimeout(pressTimer)));
 
-function setPending(latlng) {
-  pendingLatLng = latlng;
+function setPending(lngLat) {
+  pendingLatLng = { lat: lngLat.lat, lng: lngLat.lng };
   if (pendingMarker) pendingMarker.remove();
-  pendingMarker = L.marker(latlng, { opacity: 0.7 }).addTo(map).bindPopup("여기로 후보 등록").openPopup();
+  pendingMarker = new maplibregl.Marker({ color: "#5b4b6e" })
+    .setLngLat([lngLat.lng, lngLat.lat])
+    .setPopup(new maplibregl.Popup().setText("여기로 후보 등록"))
+    .addTo(map);
+  pendingMarker.togglePopup();
   document.querySelector('[data-tab="candidates"]').click();
   document.getElementById("candName").focus();
 }
 
-function pinIcon(type, number) {
+// 픽셀 핀 DOM 엘리먼트
+function pinEl(type, number) {
   const t = TYPES[type] || TYPES.sight;
-  const badge = number ? `<div class="num-badge">${number}</div>` : "";
-  return L.divIcon({
-    className: "",
-    html: `<div class="pin" style="background:${t.color}">${t.emoji}${badge}</div>`,
-    iconSize: [30, 30],
-    iconAnchor: [15, 15],
-    popupAnchor: [0, -18],
-  });
+  const el = document.createElement("div");
+  el.className = "pin";
+  el.style.background = t.color;
+  el.innerHTML = `${t.emoji}${number ? `<div class="num-badge">${number}</div>` : ""}`;
+  return el;
+}
+
+function addMarker(lat, lng, type, number, html) {
+  const m = new maplibregl.Marker({ element: pinEl(type, number), anchor: "center" }).setLngLat([lng, lat]);
+  if (html) m.setPopup(new maplibregl.Popup({ offset: 18 }).setHTML(html));
+  m.addTo(map);
+  markers.push(m);
 }
 
 function renderMap() {
-  markerLayer.clearLayers();
-  routeLayer.clearLayers();
+  if (!mapReady) return;
+  markers.forEach((m) => m.remove());
+  markers = [];
 
   const daysToShow = activeDay ? state.days.filter((d) => d.id === activeDay) : state.days;
+  const routeFeatures = [];
 
-  // 일정 장소 마커 + 동선
   daysToShow.forEach((day) => {
     const pts = [];
     day.stops.forEach((sid, i) => {
       const p = state.places[sid];
-      if (!p) return;
-      if (hiddenTypes.has(p.type)) return;
-      pts.push([p.lat, p.lng]);
-      const num = activeDay ? i + 1 : null;
-      L.marker([p.lat, p.lng], { icon: pinIcon(p.type, num) })
-        .addTo(markerLayer)
-        .bindPopup(popupHtml(p));
+      if (!p || hiddenTypes.has(p.type)) return;
+      pts.push([p.lng, p.lat]);
+      addMarker(p.lat, p.lng, p.type, activeDay ? i + 1 : null, popupHtml(p));
     });
-    // 숙소 마커
     if (day.lodging && day.lodging.lat && !hiddenTypes.has("lodging")) {
-      L.marker([day.lodging.lat, day.lodging.lng], { icon: pinIcon("lodging") })
-        .addTo(markerLayer)
-        .bindPopup(`<b>🏨 ${day.lodging.name}</b><br>${day.lodging.nameJa || ""}`);
+      addMarker(day.lodging.lat, day.lodging.lng, "lodging", null,
+        `<b>🏨 ${day.lodging.name}</b><br>${day.lodging.nameJa || ""}`);
     }
-    // 동선 (선택된 날짜일 때만 선 그리기)
     if (activeDay && pts.length > 1) {
-      L.polyline(pts, { color: "#38bdf8", weight: 3, opacity: 0.8, dashArray: "6 6" }).addTo(routeLayer);
+      routeFeatures.push({ type: "Feature", geometry: { type: "LineString", coordinates: pts } });
     }
   });
 
-  // 후보 마커
   if (!activeDay) {
     state.candidates.forEach((c) => {
       if (!c.lat || hiddenTypes.has(c.type)) return;
-      L.marker([c.lat, c.lng], { icon: pinIcon(c.type), opacity: 0.85 })
-        .addTo(markerLayer)
-        .bindPopup(`<b>📌 ${c.name}</b><br>${c.note || ""}<br><small>👍 ${c.votes.length}</small>`);
+      addMarker(c.lat, c.lng, c.type, null,
+        `<b>📌 ${c.name}</b><br>${c.note || ""}<br><small>👍 ${c.votes.length}</small>`);
     });
   }
 
-  // 화면 맞춤
-  const all = [];
-  markerLayer.eachLayer((l) => l.getLatLng && all.push(l.getLatLng()));
-  if (all.length) map.fitBounds(L.latLngBounds(all).pad(0.2), { maxZoom: 12, animate: false });
+  const src = map.getSource("routes");
+  if (src) src.setData({ type: "FeatureCollection", features: routeFeatures });
+
+  if (markers.length) {
+    const b = new maplibregl.LngLatBounds();
+    markers.forEach((m) => b.extend(m.getLngLat()));
+    map.fitBounds(b, { padding: 50, maxZoom: 12, animate: false });
+  }
 }
 
 function popupHtml(p) {
@@ -574,7 +626,7 @@ document.querySelectorAll(".tab").forEach((t) => {
     document.getElementById("tab-" + t.dataset.tab).classList.add("active");
     // 날짜 필터는 일정 탭에서만
     document.getElementById("dayFilter").style.display = t.dataset.tab === "plan" ? "flex" : "none";
-    setTimeout(() => map.invalidateSize(), 100);
+    setTimeout(() => map.resize(), 100);
   };
 });
 

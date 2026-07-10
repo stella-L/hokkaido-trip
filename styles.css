@@ -43,17 +43,22 @@ html, body {
   filter: saturate(1.05) contrast(1.02);
   border-bottom: 4px solid var(--ink);
 }
-.leaflet-container { font-family: "Galmuri11", monospace !important; }
-.leaflet-popup-content-wrapper {
+.maplibregl-map { font-family: "Galmuri11", monospace !important; }
+.maplibregl-popup-content {
   border: 3px solid var(--ink) !important;
   border-radius: 0 !important;
   box-shadow: 4px 4px 0 var(--shadow) !important;
+  font-family: "Galmuri11", monospace; font-size: 12px; color: var(--ink);
+  padding: 10px 12px;
 }
-.leaflet-popup-tip { border: 2px solid var(--ink); }
-.leaflet-control-zoom a {
+.maplibregl-popup-content a { color: #2563eb; }
+.maplibregl-popup-close-button { font-size: 16px; color: var(--ink); padding: 0 5px; }
+.maplibregl-ctrl-group {
   border: 2px solid var(--ink) !important; border-radius: 0 !important;
-  color: var(--ink) !important; font-weight: bold;
+  box-shadow: 3px 3px 0 var(--shadow) !important;
 }
+.maplibregl-ctrl-group button { border-radius: 0 !important; }
+.maplibregl-ctrl-attrib { font-size: 9px; }
 
 /* 범례 */
 .legend {
