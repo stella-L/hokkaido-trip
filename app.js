@@ -1,4 +1,4 @@
-import { TYPES, PLACES, DAYS, CANDIDATES, MEMBERS, EXPENSES, JPY_TO_KRW } from "./seed-data.js?v=place-detail";
+import { TYPES, PLACES, DAYS, CANDIDATES, MEMBERS, EXPENSES, JPY_TO_KRW } from "./seed-data.js?v=cluster-anchor-2";
 import { firebaseConfig, TRIP_ID } from "./firebase-config.js";
 import { MAPTILER_KEY, MAP_LANG } from "./maptiler-config.js";
 
@@ -179,6 +179,21 @@ function addClusterMarker(cluster) {
   markers.push(m);
 }
 
+function uniqueMapPoints(points) {
+  const seen = new Set();
+  return points.filter((point) => {
+    const key = [
+      point.type,
+      Number(point.lat).toFixed(5),
+      Number(point.lng).toFixed(5),
+      point.html,
+    ].join("|");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function clusterMapPoints(points) {
   const clusters = [];
   const radius = map.getZoom() < CLUSTER_MAX_ZOOM ? CLUSTER_RADIUS_PX : 8;
@@ -201,6 +216,34 @@ function clusterMapPoints(points) {
     }
 
     cluster.points.push(point);
+  });
+
+  clusters.forEach((cluster) => {
+    if (cluster.points.length < 2) return;
+    const center = cluster.points.reduce((acc, point) => {
+      const screen = map.project([point.lng, point.lat]);
+      acc.x += screen.x;
+      acc.y += screen.y;
+      return acc;
+    }, { x: 0, y: 0 });
+    center.x /= cluster.points.length;
+    center.y /= cluster.points.length;
+
+    let representative = cluster.points[0];
+    let bestDistance = Infinity;
+    cluster.points.forEach((point) => {
+      const screen = map.project([point.lng, point.lat]);
+      const distance = Math.hypot(screen.x - center.x, screen.y - center.y);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        representative = point;
+      }
+    });
+    cluster.lat = representative.lat;
+    cluster.lng = representative.lng;
+    const screen = map.project([cluster.lng, cluster.lat]);
+    cluster.x = screen.x;
+    cluster.y = screen.y;
   });
 
   return clusters.flatMap((c) => c.points.length > 1 ? [c] : c.points);
@@ -261,13 +304,15 @@ function renderMap({ fit = true } = {}) {
   const src = map.getSource("routes");
   if (src) src.setData({ type: "FeatureCollection", features: routeFeatures });
 
-  if (fit && mapPoints.length) {
+  const visiblePoints = uniqueMapPoints(mapPoints);
+
+  if (fit && visiblePoints.length) {
     const b = new maplibregl.LngLatBounds();
-    mapPoints.forEach((p) => b.extend([p.lng, p.lat]));
+    visiblePoints.forEach((p) => b.extend([p.lng, p.lat]));
     map.fitBounds(b, { padding: 50, maxZoom: 12, animate: false });
   }
 
-  clusterMapPoints(mapPoints).forEach((point) => {
+  clusterMapPoints(visiblePoints).forEach((point) => {
     if (point.points) addClusterMarker(point);
     else addMarker(point.lat, point.lng, point.type, point.number, point.html);
   });
