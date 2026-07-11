@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="theme-color" content="#f9d5e5" />
+  <link rel="icon" href="data:," />
   <title>홋카이도 여행 🗺️</title>
 
   <!-- Galmuri: 한글 픽셀 폰트 -->
@@ -15,7 +16,7 @@
   <!-- SortableJS (드래그앤드롭) -->
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 
-  <link rel="stylesheet" href="styles.css?v=sheet-toggle" />
+  <link rel="stylesheet" href="styles.css?v=place-detail" />
 </head>
 <body>
   <!-- 상단 지도 -->
@@ -66,8 +67,10 @@
     <div id="tab-settle" class="tab-panel"></div>
   </div>
 
+  <div id="placeDetail" class="place-detail" aria-hidden="true"></div>
+
   <div id="syncStatus" class="sync-status">저장 준비 중…</div>
 
-  <script type="module" src="app.js?v=sheet-toggle"></script>
+  <script type="module" src="app.js?v=place-detail"></script>
 </body>
 </html>

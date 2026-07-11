@@ -1,4 +1,4 @@
-import { TYPES, PLACES, DAYS, CANDIDATES, MEMBERS, EXPENSES, JPY_TO_KRW } from "./seed-data.js";
+import { TYPES, PLACES, DAYS, CANDIDATES, MEMBERS, EXPENSES, JPY_TO_KRW } from "./seed-data.js?v=place-detail";
 import { firebaseConfig, TRIP_ID } from "./firebase-config.js";
 import { MAPTILER_KEY, MAP_LANG } from "./maptiler-config.js";
 
@@ -21,9 +21,14 @@ let myName = localStorage.getItem("trip_name") || "";
 
 let activeDay = null;        // 선택된 날짜 id (null = 전체)
 const hiddenTypes = new Set(); // 숨긴 핀 종류
+let selectedPlaceId = null;
+let placeDetailLoading = false;
+let placeDetailCache = {};
+try { placeDetailCache = JSON.parse(localStorage.getItem("place_detail_cache") || "{}"); } catch {}
 
 const sheet = document.getElementById("sheet");
 const sheetToggle = document.getElementById("sheetToggle");
+const placeDetail = document.getElementById("placeDetail");
 let sheetExpanded = false;
 
 function isMobileLayout() {
@@ -81,6 +86,8 @@ let markers = [];            // 현재 표시중인 마커
 let pendingLatLng = null;    // 후보 등록용 길게-누른 좌표
 let pendingMarker = null;
 let mapReady = false;
+const CLUSTER_MAX_ZOOM = 8.2;
+const CLUSTER_RADIUS_PX = 48;
 
 map.on("load", () => {
   if (useMaptiler) applyMapLanguage();   // 라벨 로마자/한국어로
@@ -93,6 +100,7 @@ map.on("load", () => {
   mapReady = true;
   renderMap();
 });
+map.on("zoomend", () => renderMap({ fit: false }));
 
 // MapTiler 벡터 라벨을 원하는 언어로 치환
 function applyMapLanguage() {
@@ -135,6 +143,15 @@ function pinEl(type, number) {
   return el;
 }
 
+function clusterEl(count) {
+  const el = document.createElement("button");
+  el.type = "button";
+  el.className = "pin cluster-pin";
+  el.textContent = count;
+  el.setAttribute("aria-label", `${count}개 장소 모음`);
+  return el;
+}
+
 function addMarker(lat, lng, type, number, html) {
   const m = new maplibregl.Marker({ element: pinEl(type, number), anchor: "center" }).setLngLat([lng, lat]);
   if (html) m.setPopup(new maplibregl.Popup({ offset: 18 }).setHTML(html));
@@ -142,13 +159,78 @@ function addMarker(lat, lng, type, number, html) {
   markers.push(m);
 }
 
-function renderMap() {
+function addClusterMarker(cluster) {
+  const el = clusterEl(cluster.points.length);
+  el.onclick = (e) => {
+    e.stopPropagation();
+    map.easeTo({
+      center: [cluster.lng, cluster.lat],
+      zoom: Math.min(map.getZoom() + 1.8, 11),
+      duration: 280,
+    });
+  };
+  const html = `<b>${cluster.points.length}개 장소</b><br><small>확대하면 개별 핀이 보여요</small>`;
+  const m = new maplibregl.Marker({ element: el, anchor: "center" })
+    .setLngLat([cluster.lng, cluster.lat])
+    .setPopup(new maplibregl.Popup({ offset: 18 }).setHTML(html));
+  m.addTo(map);
+  markers.push(m);
+}
+
+function clusterMapPoints(points) {
+  const clusters = [];
+  const radius = map.getZoom() < CLUSTER_MAX_ZOOM ? CLUSTER_RADIUS_PX : 8;
+
+  points.forEach((point) => {
+    const screen = map.project([point.lng, point.lat]);
+    let cluster = null;
+    for (const c of clusters) {
+      const dx = screen.x - c.x;
+      const dy = screen.y - c.y;
+      if (Math.sqrt(dx * dx + dy * dy) <= radius) {
+        cluster = c;
+        break;
+      }
+    }
+
+    if (!cluster) {
+      clusters.push({ ...point, x: screen.x, y: screen.y, points: [point] });
+      return;
+    }
+
+    cluster.points.push(point);
+    const count = cluster.points.length;
+    cluster.lat = cluster.points.reduce((sum, p) => sum + p.lat, 0) / count;
+    cluster.lng = cluster.points.reduce((sum, p) => sum + p.lng, 0) / count;
+    const nextScreen = map.project([cluster.lng, cluster.lat]);
+    cluster.x = nextScreen.x;
+    cluster.y = nextScreen.y;
+  });
+
+  return clusters.flatMap((c) => c.points.length > 1 ? [c] : c.points);
+}
+
+function isUsableMapUrl(url) {
+  return /^https?:\/\/.+\..+/.test(url || "") && !/^https:\/\/maps\.app\.goo\.gl\/?$/.test(url);
+}
+
+function googleMapsSearchUrl(item, options = {}) {
+  if (options.preferCoordinates && item.lat && item.lng) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${item.lat},${item.lng}`)}`;
+  }
+  const queryText = [item.nameJa, item.name].filter(Boolean).join(" ").trim();
+  const query = queryText || (item.lat && item.lng ? `${item.lat},${item.lng}` : "");
+  return query ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}` : "";
+}
+
+function renderMap({ fit = true } = {}) {
   if (!mapReady) return;
   markers.forEach((m) => m.remove());
   markers = [];
 
   const daysToShow = activeDay ? state.days.filter((d) => d.id === activeDay) : state.days;
   const routeFeatures = [];
+  const mapPoints = [];
 
   daysToShow.forEach((day) => {
     const pts = [];
@@ -156,11 +238,13 @@ function renderMap() {
       const p = state.places[sid];
       if (!p || hiddenTypes.has(p.type)) return;
       pts.push([p.lng, p.lat]);
-      addMarker(p.lat, p.lng, p.type, activeDay ? i + 1 : null, popupHtml(p));
+      mapPoints.push({ lat: p.lat, lng: p.lng, type: p.type, number: activeDay ? i + 1 : null, html: popupHtml(p) });
     });
     if (day.lodging && day.lodging.lat && !hiddenTypes.has("lodging")) {
-      addMarker(day.lodging.lat, day.lodging.lng, "lodging", null,
-        `<b>🏨 ${day.lodging.name}</b><br>${day.lodging.nameJa || ""}`);
+      mapPoints.push({
+        lat: day.lodging.lat, lng: day.lodging.lng, type: "lodging", number: null,
+        html: `<b>🏨 ${day.lodging.name}</b><br>${day.lodging.nameJa || ""}`,
+      });
     }
     if (activeDay && pts.length > 1) {
       routeFeatures.push({ type: "Feature", geometry: { type: "LineString", coordinates: pts } });
@@ -170,25 +254,32 @@ function renderMap() {
   if (!activeDay) {
     state.candidates.forEach((c) => {
       if (!c.lat || hiddenTypes.has(c.type)) return;
-      addMarker(c.lat, c.lng, c.type, null,
-        `<b>📌 ${c.name}</b><br>${c.note || ""}<br><small>👍 ${c.votes.length}</small>`);
+      mapPoints.push({
+        lat: c.lat, lng: c.lng, type: c.type, number: null,
+        html: `<b>📌 ${c.name}</b><br>${c.note || ""}<br><small>👍 ${c.votes.length}</small>`,
+      });
     });
   }
 
   const src = map.getSource("routes");
   if (src) src.setData({ type: "FeatureCollection", features: routeFeatures });
 
-  if (markers.length) {
+  if (fit && mapPoints.length) {
     const b = new maplibregl.LngLatBounds();
-    markers.forEach((m) => b.extend(m.getLngLat()));
+    mapPoints.forEach((p) => b.extend([p.lng, p.lat]));
     map.fitBounds(b, { padding: 50, maxZoom: 12, animate: false });
   }
+
+  clusterMapPoints(mapPoints).forEach((point) => {
+    if (point.points) addClusterMarker(point);
+    else addMarker(point.lat, point.lng, point.type, point.number, point.html);
+  });
 }
 
 function popupHtml(p) {
   return `<b>${TYPES[p.type].emoji} ${p.name}</b><br>${p.nameJa || ""}` +
     (p.note ? `<br><small>${p.note}</small>` : "") +
-    `<br><a href="https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}" target="_blank">구글맵 열기 ↗</a>`;
+    `<br><a href="${googleMapsSearchUrl(p)}" target="_blank">구글맵 열기 ↗</a>`;
 }
 
 // ───────────────────────── 범례 ─────────────────────────
@@ -251,6 +342,210 @@ const yen = (n) => "¥" + Math.round(n).toLocaleString();
 const won = (n) => "≈₩" + Math.round(n * (state.krwRate || 9)).toLocaleString();
 const memberName = (id) => (state.members.find((m) => m.id === id) || {}).name || "?";
 const expParts = (e) => (e.participants && e.participants.length ? e.participants : state.members.map((m) => m.id));
+const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
+}[ch]));
+
+function detailSources(place) {
+  if (place.wikiTitle) {
+    if (typeof place.wikiTitle === "string") return [{ lang: "ko", title: place.wikiTitle }, { lang: "ja", title: place.wikiTitle }];
+    return Object.entries(place.wikiTitle).map(([lang, title]) => ({ lang, title })).filter((x) => x.title);
+  }
+  return [
+    { lang: "ko", title: place.name },
+    { lang: "ja", title: place.nameJa },
+    { lang: "en", title: place.name },
+  ].filter((x) => x.title);
+}
+
+function normalizePhoto(photo) {
+  if (!photo || !photo.url) return null;
+  return {
+    url: photo.url,
+    alt: photo.alt || "",
+    credit: photo.credit || "",
+    sourceUrl: photo.sourceUrl || "",
+  };
+}
+
+function saveDetailCache() {
+  try { localStorage.setItem("place_detail_cache", JSON.stringify(placeDetailCache)); } catch {}
+}
+
+function mergeSeedPlaceDetails() {
+  Object.entries(PLACES).forEach(([id, seedPlace]) => {
+    if (!state.places[id]) return;
+    if (seedPlace.description) state.places[id].description = seedPlace.description;
+    ["photos", "wikiTitle", "detailSourceLabel", "detailSourceUrl"].forEach((key) => {
+      if (seedPlace[key] !== undefined) state.places[id][key] = structuredClone(seedPlace[key]);
+    });
+  });
+}
+
+async function fetchWikiSummary(lang, title) {
+  const searchUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(title)}&format=json&origin=*&srlimit=1`;
+  const searchRes = await fetch(searchUrl);
+  if (!searchRes.ok) throw new Error("wiki search failed");
+  const search = await searchRes.json();
+  const resolvedTitle = search.query?.search?.[0]?.title;
+  if (!resolvedTitle) throw new Error("wiki page not found");
+
+  const encoded = encodeURIComponent(resolvedTitle.replaceAll(" ", "_"));
+  const summaryUrl = `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encoded}`;
+  const res = await fetch(summaryUrl);
+  if (!res.ok) throw new Error("summary not found");
+  const summary = await res.json();
+  const photos = [];
+
+  try {
+    const mediaRes = await fetch(`https://${lang}.wikipedia.org/api/rest_v1/page/media-list/${encodeURIComponent((summary.title || title).replaceAll(" ", "_"))}`);
+    if (mediaRes.ok) {
+      const media = await mediaRes.json();
+      (media.items || []).forEach((item) => {
+        const src = item.thumbnail?.url || item.original?.source || item.srcset?.at(-1)?.src;
+        if (!src || !/^https?:/.test(src)) return;
+        if (photos.some((p) => p.url === src)) return;
+        photos.push(normalizePhoto({
+          url: src,
+          alt: item.caption?.text || summary.title || title,
+          credit: item.artist?.text || item.credit || "Wikimedia",
+          sourceUrl: item.file_page || item.title ? `https://commons.wikimedia.org/wiki/${encodeURIComponent(item.title || "")}` : summary.content_urls?.desktop?.page,
+        }));
+      });
+    }
+  } catch {}
+
+  if (summary.thumbnail?.source && !photos.some((p) => p.url === summary.thumbnail.source)) {
+    photos.unshift(normalizePhoto({
+      url: summary.thumbnail.source,
+      alt: summary.title || title,
+      credit: "Wikipedia",
+      sourceUrl: summary.content_urls?.desktop?.page || "",
+    }));
+  }
+
+  return {
+    description: summary.extract || "",
+    photos: photos.filter(Boolean).slice(0, 3),
+    sourceLabel: `${lang}.wikipedia.org`,
+    sourceUrl: summary.content_urls?.desktop?.page || summaryUrl,
+  };
+}
+
+async function getPlaceDetail(placeId) {
+  const place = state.places[placeId];
+  if (!place) return null;
+  const manualPhotos = (place.photos || []).map(normalizePhoto).filter(Boolean).slice(0, 3);
+  const manual = {
+    description: place.description || "",
+    photos: manualPhotos,
+    sourceLabel: place.detailSourceLabel || "",
+    sourceUrl: place.detailSourceUrl || "",
+  };
+
+  const cached = placeDetailCache[placeId] || {};
+  let detail = {
+    description: manual.description || cached.description || "",
+    photos: manual.photos.length ? manual.photos : (cached.photos || []).slice(0, 3),
+    sourceLabel: manual.sourceLabel || cached.sourceLabel || "",
+    sourceUrl: manual.sourceUrl || cached.sourceUrl || "",
+  };
+  if (detail.description && detail.photos.length) return detail;
+
+  for (const source of detailSources(place)) {
+    try {
+      const wiki = await fetchWikiSummary(source.lang, source.title);
+      detail = {
+        description: detail.description || wiki.description,
+        photos: detail.photos.length ? detail.photos : wiki.photos,
+        sourceLabel: detail.sourceLabel || wiki.sourceLabel,
+        sourceUrl: detail.sourceUrl || wiki.sourceUrl,
+      };
+      placeDetailCache[placeId] = detail;
+      saveDetailCache();
+      return detail;
+    } catch {}
+  }
+
+  placeDetailCache[placeId] = detail;
+  saveDetailCache();
+  return detail;
+}
+
+function renderPlaceDetailSheet(detail = null) {
+  const place = selectedPlaceId ? state.places[selectedPlaceId] : null;
+  if (!place) {
+    placeDetail.className = "place-detail";
+    placeDetail.setAttribute("aria-hidden", "true");
+    placeDetail.innerHTML = "";
+    return;
+  }
+
+  const t = TYPES[place.type] || TYPES.sight;
+  const photos = detail?.photos || [];
+  const description = detail?.description || "";
+  const source = detail?.sourceUrl
+    ? `<a href="${escapeHtml(detail.sourceUrl)}" target="_blank">${escapeHtml(detail.sourceLabel || "출처")}</a>`
+    : "";
+
+  placeDetail.className = "place-detail open";
+  placeDetail.setAttribute("aria-hidden", "false");
+  placeDetail.innerHTML = `
+    <div class="place-detail-backdrop" data-close-detail></div>
+    <section class="place-detail-sheet" role="dialog" aria-modal="true" aria-label="${escapeHtml(place.name)} 상세 정보">
+      <div class="place-detail-handle"></div>
+      <div class="place-detail-head">
+        <div class="place-detail-title">
+          <span class="place-type" style="background:${t.color}">${t.emoji} ${escapeHtml(t.label)}</span>
+          <h2>${escapeHtml(place.name)}</h2>
+          <p>${escapeHtml(place.nameJa || "")}</p>
+        </div>
+        <button class="place-detail-close" type="button" data-close-detail aria-label="상세 닫기">×</button>
+      </div>
+      ${photos.length ? `
+        <div class="place-photos">
+          ${photos.map((photo) => `
+            <figure>
+              <img src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.alt || place.name)}" loading="lazy" />
+              ${photo.credit || photo.sourceUrl ? `<figcaption>${photo.sourceUrl ? `<a href="${escapeHtml(photo.sourceUrl)}" target="_blank">${escapeHtml(photo.credit || "이미지 출처")}</a>` : escapeHtml(photo.credit)}</figcaption>` : ""}
+            </figure>`).join("")}
+        </div>` : `<div class="place-photo-empty">사진을 불러오는 중이에요</div>`}
+      <div class="place-detail-body">
+        ${description ? `<p>${escapeHtml(description)}</p>` : `<p class="detail-muted">설명을 준비 중이에요. 우선 메모와 지도 링크를 확인해 주세요.</p>`}
+        ${place.note ? `<div class="place-note">${escapeHtml(place.note)}</div>` : ""}
+      </div>
+      <div class="place-detail-actions">
+        <a href="${googleMapsSearchUrl(place)}" target="_blank">구글맵 열기 ↗</a>
+        ${source}
+      </div>
+      ${placeDetailLoading ? `<div class="detail-loading">정보 불러오는 중…</div>` : ""}
+    </section>`;
+
+  placeDetail.querySelectorAll("[data-close-detail]").forEach((el) => {
+    el.onclick = closePlaceDetail;
+  });
+}
+
+async function openPlaceDetail(placeId) {
+  selectedPlaceId = placeId;
+  placeDetailLoading = true;
+  setSheetExpanded(true);
+  renderPlaceDetailSheet(placeDetailCache[placeId] || null);
+  const detail = await getPlaceDetail(placeId);
+  if (selectedPlaceId !== placeId) return;
+  placeDetailLoading = false;
+  renderPlaceDetailSheet(detail);
+}
+
+function closePlaceDetail() {
+  selectedPlaceId = null;
+  placeDetailLoading = false;
+  renderPlaceDetailSheet();
+}
+
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && selectedPlaceId) closePlaceDetail();
+});
 
 // 사람별 순잔액(낸 돈 - 부담해야 할 몫). +면 받을 돈, -면 낼 돈
 function balances() {
@@ -344,7 +639,7 @@ function renderPlan() {
     let lodging = "";
     if (day.lodging) {
       const lg = day.lodging;
-      const mapHref = lg.mapUrl || (lg.lat ? `https://www.google.com/maps/search/?api=1&query=${lg.lat},${lg.lng}` : "");
+      const mapHref = isUsableMapUrl(lg.mapUrl) ? lg.mapUrl : googleMapsSearchUrl(lg, { preferCoordinates: true });
       lodging = `
       <div class="lodging">
         <span class="emo">🏨</span>
@@ -371,12 +666,12 @@ function renderPlan() {
           }
           return leg + `<li class="stop" data-sid="${sid}">
             <span class="num" style="background:${t.color}">${t.emoji}</span>
-            <div class="st-body">
+            <button class="st-body place-detail-trigger" type="button" data-detail="${sid}" aria-label="${p.name} 상세 보기">
               <div class="st-name">${p.name}</div>
               <div class="st-note">${p.nameJa || ""}${p.note ? " · " + p.note : ""}</div>
-            </div>
+            </button>
             <div class="st-actions">
-              <a class="icon-btn" href="https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}" target="_blank">↗</a>
+              <a class="icon-btn" href="${googleMapsSearchUrl(p)}" target="_blank">↗</a>
               <button class="icon-btn" data-remove="${day.id}:${sid}">✕</button>
             </div>
           </li>`;
@@ -394,6 +689,11 @@ function renderPlan() {
       ${expenseSection(day)}
     </div>`;
   }).join("");
+
+  // 장소 상세 열기
+  el.querySelectorAll("[data-detail]").forEach((b) => {
+    b.onclick = () => openPlaceDetail(b.dataset.detail);
+  });
 
   // 삭제 버튼
   el.querySelectorAll("[data-remove]").forEach((b) => {
@@ -485,7 +785,7 @@ function renderCandidates() {
       </div>
       <button class="vote-btn ${voted ? "voted" : ""}" data-vote="${c.id}">👍 ${c.votes.length}</button>
       <button class="cand-del" data-del="${c.id}">🗑</button>
-      <select class="add-day" data-add="${c.id}">
+      <select class="add-day" name="add-day-${c.id}" data-add="${c.id}">
         <option value="">📅 일정에 넣기…</option>
         ${state.days.map((d) => `<option value="${d.id}">${d.date} ${d.weekday} (${d.title})</option>`).join("")}
       </select>
@@ -692,6 +992,7 @@ async function boot() {
   if (cached) {
     try { Object.assign(state, JSON.parse(cached)); } catch {}
   }
+  mergeSeedPlaceDetails();
   renderAll();
 
   // 2) Firebase 설정이 있으면 실시간 동기화
@@ -717,6 +1018,7 @@ async function boot() {
         if (d.members) state.members = d.members;
         if (d.expenses) state.expenses = d.expenses;
         if (d.krwRate) state.krwRate = d.krwRate;
+        mergeSeedPlaceDetails();
         localStorage.setItem("trip_state", JSON.stringify(serializable()));
         renderAll();
         flash("🔄 업데이트됨");
