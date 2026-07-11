@@ -215,6 +215,7 @@ function isUsableMapUrl(url) {
 }
 
 function googleMapsSearchUrl(item, options = {}) {
+  if (isUsableMapUrl(item.mapUrl)) return item.mapUrl;
   if (options.preferCoordinates && item.lat && item.lng) {
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${item.lat},${item.lng}`)}`;
   }
@@ -776,13 +777,15 @@ function renderCandidates() {
   el.innerHTML = sorted.length ? sorted.map((c) => {
     const t = TYPES[c.type];
     const voted = c.votes.includes(me);
+    const mapUrl = isUsableMapUrl(c.mapUrl) ? c.mapUrl : "";
     return `<div class="cand-card">
       <span class="cand-emo">${t.emoji}</span>
       <div class="cand-body">
         <div class="cand-name">${c.name}</div>
         ${c.note ? `<div class="cand-note">${c.note}</div>` : ""}
-        <div class="cand-by">${c.addedBy || "익명"} 올림${c.lat ? " · 📍위치있음" : ""}</div>
+        <div class="cand-by">${c.addedBy || "익명"} 올림${c.lat ? " · 📍위치있음" : ""}${mapUrl ? " · 지도링크" : ""}</div>
       </div>
+      ${mapUrl ? `<a class="cand-map" href="${mapUrl}" target="_blank">지도 ↗</a>` : ""}
       <button class="vote-btn ${voted ? "voted" : ""}" data-vote="${c.id}">👍 ${c.votes.length}</button>
       <button class="cand-del" data-del="${c.id}">🗑</button>
       <select class="add-day" name="add-day-${c.id}" data-add="${c.id}">
@@ -823,6 +826,7 @@ function promoteCandidate(c, dayId) {
   state.places[pid] = {
     name: c.name, nameJa: c.nameJa || "", type: c.type,
     lat: c.lat || ref.lat, lng: c.lng || ref.lng, note: c.note || "",
+    mapUrl: isUsableMapUrl(c.mapUrl) ? c.mapUrl : "",
   };
   day.stops.push(pid);
   state.candidates = state.candidates.filter((x) => x.id !== c.id);
@@ -925,6 +929,11 @@ document.getElementById("candForm").addEventListener("submit", (e) => {
     myName = prompt("이름을 알려주세요 (후보에 표시돼요)") || "익명";
     localStorage.setItem("trip_name", myName);
   }
+  const mapUrl = document.getElementById("candMapUrl").value.trim();
+  if (mapUrl && !isUsableMapUrl(mapUrl)) {
+    alert("구글 지도 링크를 확인해 주세요");
+    return;
+  }
   const c = {
     id: "c" + Date.now(),
     name: document.getElementById("candName").value.trim(),
@@ -932,6 +941,7 @@ document.getElementById("candForm").addEventListener("submit", (e) => {
     note: document.getElementById("candNote").value.trim(),
     lat: pendingLatLng ? pendingLatLng.lat : null,
     lng: pendingLatLng ? pendingLatLng.lng : null,
+    mapUrl,
     addedBy: myName,
     votes: [],
   };

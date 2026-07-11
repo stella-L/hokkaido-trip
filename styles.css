@@ -244,6 +244,11 @@ button, input, select { min-width: 0; }
 .cand-name { font-weight: bold; font-size: 13px; }
 .cand-note { font-size: 10px; color: #8a7c9a; margin-top: 2px; }
 .cand-by { font-size: 9px; color: #b0a4bf; margin-top: 2px; }
+.cand-map {
+  font-family: inherit; font-size: 11px; font-weight: bold; color: var(--ink);
+  background: var(--sky); border: 3px solid var(--ink); padding: 7px 9px;
+  text-decoration: none;
+}
 .vote-btn {
   font-family: inherit; font-size: 12px; font-weight: bold; color: var(--ink);
   background: #fff; border: 3px solid var(--ink); padding: 7px 10px; cursor: pointer;
@@ -594,6 +599,10 @@ button, input, select { min-width: 0; }
   .transfer,
   .settle-row {
     flex-wrap: wrap;
+  }
+  .cand-map {
+    flex: 1 1 auto;
+    text-align: center;
   }
   .cand-form-row select,
   .cand-form-row input,
