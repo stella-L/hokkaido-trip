@@ -163,9 +163,11 @@ function addClusterMarker(cluster) {
   const el = clusterEl(cluster.points.length);
   el.onclick = (e) => {
     e.stopPropagation();
-    map.easeTo({
-      center: [cluster.lng, cluster.lat],
-      zoom: Math.min(map.getZoom() + 1.8, 11),
+    const bounds = new maplibregl.LngLatBounds();
+    cluster.points.forEach((p) => bounds.extend([p.lng, p.lat]));
+    map.fitBounds(bounds, {
+      padding: 72,
+      maxZoom: Math.min(map.getZoom() + 2.2, 11),
       duration: 280,
     });
   };
@@ -199,12 +201,6 @@ function clusterMapPoints(points) {
     }
 
     cluster.points.push(point);
-    const count = cluster.points.length;
-    cluster.lat = cluster.points.reduce((sum, p) => sum + p.lat, 0) / count;
-    cluster.lng = cluster.points.reduce((sum, p) => sum + p.lng, 0) / count;
-    const nextScreen = map.project([cluster.lng, cluster.lat]);
-    cluster.x = nextScreen.x;
-    cluster.y = nextScreen.y;
   });
 
   return clusters.flatMap((c) => c.points.length > 1 ? [c] : c.points);

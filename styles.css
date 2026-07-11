@@ -273,21 +273,13 @@ button, input, select { min-width: 0; }
   display: grid; place-items: center;
 }
 .cluster-pin {
-  width: 36px; height: 36px;
+  width: 32px; height: 32px;
   background: var(--cream);
   color: var(--ink);
   font-family: inherit;
   font-size: 13px;
   font-weight: bold;
   cursor: pointer;
-}
-.cluster-pin::after {
-  content: "";
-  position: absolute;
-  inset: -7px;
-  border: 2px dashed var(--ink);
-  opacity: .35;
-  pointer-events: none;
 }
 
 /* 장소 상세 */
