@@ -22,6 +22,29 @@ let myName = localStorage.getItem("trip_name") || "";
 let activeDay = null;        // 선택된 날짜 id (null = 전체)
 const hiddenTypes = new Set(); // 숨긴 핀 종류
 
+const sheet = document.getElementById("sheet");
+const sheetToggle = document.getElementById("sheetToggle");
+let sheetExpanded = false;
+
+function isMobileLayout() {
+  return window.matchMedia("(max-width: 819px)").matches;
+}
+
+function setSheetExpanded(expanded) {
+  sheetExpanded = !isMobileLayout() || expanded;
+  sheet.classList.toggle("sheet-expanded", sheetExpanded);
+  sheet.classList.toggle("sheet-collapsed", !sheetExpanded);
+  document.body.classList.toggle("sheet-expanded", sheetExpanded);
+  document.body.classList.toggle("sheet-collapsed", !sheetExpanded);
+  sheetToggle.setAttribute("aria-expanded", String(sheetExpanded));
+  sheetToggle.setAttribute("aria-label", sheetExpanded ? "일정 패널 접기" : "일정 패널 펼치기");
+  setTimeout(() => map.resize(), 260);
+}
+
+sheetToggle.addEventListener("click", () => setSheetExpanded(!sheetExpanded));
+window.addEventListener("resize", () => setSheetExpanded(sheetExpanded));
+setSheetExpanded(false);
+
 // ───────────────────────── 지도 (MapLibre) ─────────────────────────
 // 무료 OSM 래스터 스타일 (MapTiler 키 없을 때 폴백)
 const OSM_STYLE = {
@@ -97,6 +120,7 @@ function setPending(lngLat) {
     .setPopup(new maplibregl.Popup().setText("여기로 후보 등록"))
     .addTo(map);
   pendingMarker.togglePopup();
+  setSheetExpanded(true);
   document.querySelector('[data-tab="candidates"]').click();
   document.getElementById("candName").focus();
 }
@@ -503,6 +527,7 @@ function promoteCandidate(c, dayId) {
   day.stops.push(pid);
   state.candidates = state.candidates.filter((x) => x.id !== c.id);
   commit(); renderAll();
+  setSheetExpanded(true);
   document.querySelector('[data-tab="plan"]').click();
   const card = document.getElementById("card-" + dayId);
   if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -620,6 +645,7 @@ document.getElementById("candForm").addEventListener("submit", (e) => {
 // 탭 전환
 document.querySelectorAll(".tab").forEach((t) => {
   t.onclick = () => {
+    setSheetExpanded(true);
     document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
     document.querySelectorAll(".tab-panel").forEach((x) => x.classList.remove("active"));
     t.classList.add("active");
