@@ -1028,6 +1028,94 @@ function serializable() {
   };
 }
 
+const seedState = {
+  days: DAYS,
+  places: PLACES,
+  candidates: CANDIDATES,
+  members: MEMBERS,
+  expenses: EXPENSES,
+  krwRate: JPY_TO_KRW,
+};
+
+function compactState(data) {
+  return {
+    days: data?.days || [],
+    places: data?.places || {},
+    candidates: data?.candidates || [],
+    members: data?.members || [],
+    expenses: data?.expenses || [],
+    krwRate: data?.krwRate || JPY_TO_KRW,
+  };
+}
+
+function dataScore(data) {
+  const d = compactState(data);
+  const votes = d.candidates.reduce((sum, c) => sum + (c.votes?.length || 0), 0);
+  const scheduledStops = d.days.reduce((sum, day) => sum + (day.stops?.length || 0), 0);
+  return (
+    Object.keys(d.places).length +
+    d.candidates.length * 4 +
+    votes * 2 +
+    d.members.length * 8 +
+    d.expenses.length * 12 +
+    scheduledStops
+  );
+}
+
+function mergeById(primaryItems, recoveryItems, mergeItem = (_, recovery) => recovery) {
+  const map = new Map((primaryItems || []).map((item) => [item.id, item]));
+  (recoveryItems || []).forEach((item) => {
+    if (!item?.id) return;
+    map.set(item.id, map.has(item.id) ? mergeItem(map.get(item.id), item) : item);
+  });
+  return Array.from(map.values());
+}
+
+function mergeCandidates(primaryItems, recoveryItems) {
+  return mergeById(primaryItems, recoveryItems, (primary, recovery) => {
+    const votes = Array.from(new Set([...(primary.votes || []), ...(recovery.votes || [])]));
+    return (recovery.votes?.length || 0) > (primary.votes?.length || 0)
+      ? { ...primary, ...recovery, votes }
+      : { ...recovery, ...primary, votes };
+  });
+}
+
+function hasUserData(data) {
+  if (!data) return false;
+  const d = compactState(data);
+  return JSON.stringify(d) !== JSON.stringify(compactState(seedState));
+}
+
+function mergeRecoveryData(localData, remoteData) {
+  const local = compactState(localData);
+  const remote = compactState(remoteData);
+  const remoteHasUserData = hasUserData(remote);
+  return {
+    days: remoteHasUserData ? remote.days : local.days,
+    places: remoteHasUserData ? { ...local.places, ...remote.places } : local.places,
+    candidates: mergeCandidates(remote.candidates, local.candidates),
+    members: mergeById(remote.members, local.members),
+    expenses: mergeById(remote.expenses, local.expenses),
+    krwRate: remoteHasUserData ? remote.krwRate : local.krwRate,
+  };
+}
+
+function shouldRestoreLocal(localData, remoteData, mergedData) {
+  if (!hasUserData(localData)) return false;
+  if (!remoteData) return true;
+  if (!hasUserData(remoteData)) return true;
+  return JSON.stringify(compactState(mergedData)) !== JSON.stringify(compactState(remoteData));
+}
+
+function saveRecoveryBackup(data) {
+  if (!data) return;
+  try {
+    const payload = JSON.stringify(compactState(data));
+    localStorage.setItem("trip_recovery_latest", payload);
+    localStorage.setItem(`trip_recovery_${Date.now()}`, payload);
+  } catch {}
+}
+
 let saveTimer;
 function commit() {
   clearTimeout(saveTimer);
@@ -1040,8 +1128,13 @@ function commit() {
 async function boot() {
   // 1) 로컬 캐시 먼저 반영 (오프라인/즉시 표시)
   const cached = localStorage.getItem("trip_state");
+  let cachedState = null;
   if (cached) {
-    try { Object.assign(state, JSON.parse(cached)); } catch {}
+    try {
+      cachedState = JSON.parse(cached);
+      saveRecoveryBackup(cachedState);
+      Object.assign(state, cachedState);
+    } catch {}
   }
   mergeSeedPlaceDetails();
   renderAll();
@@ -1062,9 +1155,22 @@ async function boot() {
       };
 
       onSnapshot(ref, (snap) => {
-        if (!snap.exists()) { saveRemote(serializable()); return; }
+        if (!snap.exists()) {
+          const recovered = mergeRecoveryData(cachedState, null);
+          if (shouldRestoreLocal(cachedState, null, recovered)) {
+            saveRemote(recovered);
+            flash("☁️ 로컬 데이터 복구됨");
+          }
+          return;
+        }
         const d = snap.data();
         if (d._by === me) return; // 내가 방금 쓴 건 무시
+        const recovered = mergeRecoveryData(cachedState, d);
+        if (shouldRestoreLocal(cachedState, d, recovered)) {
+          saveRemote(recovered);
+          flash("☁️ 로컬 데이터 복구됨");
+          return;
+        }
         state.days = d.days; state.places = d.places; state.candidates = d.candidates;
         if (d.members) state.members = d.members;
         if (d.expenses) state.expenses = d.expenses;
