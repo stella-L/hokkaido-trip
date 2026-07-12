@@ -1116,6 +1116,24 @@ function saveRecoveryBackup(data) {
   } catch {}
 }
 
+function loadRecoveryBackup() {
+  const keys = Object.keys(localStorage)
+    .filter((key) => key === "trip_recovery_latest" || key.startsWith("trip_recovery_"))
+    .sort()
+    .reverse();
+  for (const key of keys) {
+    try {
+      const data = JSON.parse(localStorage.getItem(key));
+      if (hasUserData(data)) return data;
+    } catch {}
+  }
+  return null;
+}
+
+function isForceRestoreMode() {
+  return new URLSearchParams(location.search).has("restoreLocal");
+}
+
 let saveTimer;
 function commit() {
   clearTimeout(saveTimer);
@@ -1153,6 +1171,20 @@ async function boot() {
           .then(() => flash("☁️ 저장됨"))
           .catch(() => flash("⚠️ 저장 실패"));
       };
+
+      if (isForceRestoreMode()) {
+        const recovery = loadRecoveryBackup() || cachedState;
+        if (hasUserData(recovery)) {
+          saveRemote(recovery);
+          Object.assign(state, recovery);
+          localStorage.setItem("trip_state", JSON.stringify(compactState(recovery)));
+          renderAll();
+          flash("☁️ 강제 복구 저장됨");
+          return;
+        }
+        flash("⚠️ 복구할 로컬 데이터 없음");
+        return;
+      }
 
       onSnapshot(ref, (snap) => {
         if (!snap.exists()) {
