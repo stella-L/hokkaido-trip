@@ -1166,10 +1166,9 @@ function isDangerousOverwrite(incomingData, remoteData) {
   const dropsMembers = remote.members.length >= 2 && incoming.members.length <= Math.floor(remote.members.length * 0.4);
   const dropsExpenses = remote.expenses.length >= 2 && incoming.expenses.length <= Math.floor(remote.expenses.length * 0.4);
   const muchSmaller = dataScore(incoming) < dataScore(remote) * 0.55;
-  return muchSmaller && (
-    clearsCandidates || clearsMembers || clearsExpenses ||
-    dropsCandidates || dropsMembers || dropsExpenses
-  );
+  if (clearsCandidates || clearsMembers || clearsExpenses) return true;
+  if (dropsMembers || dropsExpenses) return true;
+  return muchSmaller && (dropsCandidates || dropsMembers || dropsExpenses);
 }
 
 function saveRecoveryBackup(data) {
@@ -1301,17 +1300,18 @@ async function boot() {
 
       onSnapshot(ref, (snap) => {
         if (!snap.exists()) {
-          const recovered = mergeRecoveryData(cachedState, null);
-          if (shouldRestoreLocal(cachedState, null, recovered)) {
+          const localData = loadRecoveryBackup() || serializable() || cachedState;
+          const recovered = mergeRecoveryData(localData, null);
+          if (shouldRestoreLocal(localData, null, recovered)) {
             saveRemote(recovered, "auto-local-restore");
             flash("☁️ 로컬 데이터 복구됨");
           }
           return;
         }
         const d = snap.data();
-        if (d._by === me) return; // 내가 방금 쓴 건 무시
-        const recovered = mergeRecoveryData(cachedState, d);
-        if (shouldRestoreLocal(cachedState, d, recovered)) {
+        const localData = loadRecoveryBackup() || serializable() || cachedState;
+        const recovered = mergeRecoveryData(localData, d);
+        if (shouldRestoreLocal(localData, d, recovered)) {
           saveRemote(recovered, "merge-local-recovery");
           flash("☁️ 로컬 데이터 복구됨");
           return;
