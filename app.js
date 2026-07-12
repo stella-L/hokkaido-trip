@@ -935,6 +935,16 @@ function renderSettle() {
     <div class="settle-box">
       <div class="settle-title">💸 이렇게 보내면 끝!</div>
       ${transferHtml}
+    </div>
+
+    <div class="settle-box backup-box">
+      <div class="settle-title">🛡️ 데이터 백업</div>
+      <div class="backup-summary">${dataSummary(state)}</div>
+      <div class="backup-actions">
+        <button id="exportBackup" type="button">백업 파일 저장</button>
+        <button id="restoreLocalBackup" type="button">로컬 백업 복구</button>
+      </div>
+      <div class="rate-hint">저장할 때 원격 백업도 자동으로 남고, 빈 데이터 덮어쓰기는 차단돼요.</div>
     </div>`;
 
   // 멤버 추가
@@ -961,6 +971,23 @@ function renderSettle() {
   el.querySelector("#rateInput").onchange = (e) => {
     state.krwRate = Number(e.target.value) || 9;
     commit(); renderSettle();
+  };
+  el.querySelector("#exportBackup").onclick = () => {
+    downloadJson(`hokkaido-trip-${Date.now()}.json`, serializable());
+    flash("💾 백업 파일 저장됨");
+  };
+  el.querySelector("#restoreLocalBackup").onclick = async () => {
+    const recovery = loadRecoveryBackup();
+    if (!recovery) {
+      alert("이 브라우저에 복구할 로컬 백업이 없어요.");
+      return;
+    }
+    if (!confirm(`이 브라우저의 로컬 백업으로 복구할까요?\n${dataSummary(recovery)}`)) return;
+    Object.assign(state, compactState(recovery));
+    localStorage.setItem("trip_state", JSON.stringify(serializable()));
+    saveRecoveryBackup(serializable());
+    renderAll();
+    if (saveRemote) await saveRemote(serializable(), "manual-local-restore");
   };
 }
 
@@ -1019,6 +1046,7 @@ function renderAll() {
 
 // ───────────────────────── 저장/동기화 ─────────────────────────
 let saveRemote = null; // Firebase 저장 함수 (설정 시)
+let remoteRevision = 0;
 const status = document.getElementById("syncStatus");
 
 function serializable() {
@@ -1062,6 +1090,11 @@ function dataScore(data) {
   );
 }
 
+function dataSummary(data) {
+  const d = compactState(data);
+  return `후보 ${d.candidates.length}개 · 멤버 ${d.members.length}명 · 지출 ${d.expenses.length}개`;
+}
+
 function mergeById(primaryItems, recoveryItems, mergeItem = (_, recovery) => recovery) {
   const map = new Map((primaryItems || []).map((item) => [item.id, item]));
   (recoveryItems || []).forEach((item) => {
@@ -1086,6 +1119,17 @@ function hasUserData(data) {
   return JSON.stringify(d) !== JSON.stringify(compactState(seedState));
 }
 
+function isSeedLikeData(data) {
+  const d = compactState(data);
+  const seed = compactState(seedState);
+  return (
+    d.members.length === 0 &&
+    d.expenses.length === 0 &&
+    JSON.stringify(d.days) === JSON.stringify(seed.days) &&
+    JSON.stringify(d.candidates) === JSON.stringify(seed.candidates)
+  );
+}
+
 function mergeRecoveryData(localData, remoteData) {
   const local = compactState(localData);
   const remote = compactState(remoteData);
@@ -1107,8 +1151,29 @@ function shouldRestoreLocal(localData, remoteData, mergedData) {
   return JSON.stringify(compactState(mergedData)) !== JSON.stringify(compactState(remoteData));
 }
 
+function isDangerousOverwrite(incomingData, remoteData) {
+  if (!hasUserData(remoteData)) return false;
+  if (!hasUserData(incomingData)) return true;
+
+  const incoming = compactState(incomingData);
+  const remote = compactState(remoteData);
+  if (isSeedLikeData(incoming)) return true;
+
+  const clearsCandidates = remote.candidates.length > 0 && incoming.candidates.length === 0;
+  const clearsMembers = remote.members.length > 0 && incoming.members.length === 0;
+  const clearsExpenses = remote.expenses.length > 0 && incoming.expenses.length === 0;
+  const dropsCandidates = remote.candidates.length >= 3 && incoming.candidates.length <= Math.floor(remote.candidates.length * 0.4);
+  const dropsMembers = remote.members.length >= 2 && incoming.members.length <= Math.floor(remote.members.length * 0.4);
+  const dropsExpenses = remote.expenses.length >= 2 && incoming.expenses.length <= Math.floor(remote.expenses.length * 0.4);
+  const muchSmaller = dataScore(incoming) < dataScore(remote) * 0.55;
+  return muchSmaller && (
+    clearsCandidates || clearsMembers || clearsExpenses ||
+    dropsCandidates || dropsMembers || dropsExpenses
+  );
+}
+
 function saveRecoveryBackup(data) {
-  if (!data) return;
+  if (!hasUserData(data)) return;
   try {
     const payload = JSON.stringify(compactState(data));
     localStorage.setItem("trip_recovery_latest", payload);
@@ -1130,6 +1195,18 @@ function loadRecoveryBackup() {
   return null;
 }
 
+function downloadJson(filename, data) {
+  const blob = new Blob([JSON.stringify(compactState(data), null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 function isForceRestoreMode() {
   return new URLSearchParams(location.search).has("restoreLocal");
 }
@@ -1138,6 +1215,7 @@ let saveTimer;
 function commit() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
+    saveRecoveryBackup(serializable());
     localStorage.setItem("trip_state", JSON.stringify(serializable()));
     if (saveRemote) saveRemote(serializable());
   }, 300);
@@ -1161,21 +1239,56 @@ async function boot() {
   if (firebaseConfig) {
     try {
       const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
-      const { getFirestore, doc, onSnapshot, setDoc } =
+      const { getFirestore, doc, getDoc, onSnapshot, setDoc } =
         await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
       const db = getFirestore(initializeApp(firebaseConfig));
       const ref = doc(db, "trips", TRIP_ID);
 
-      saveRemote = (data) => {
-        setDoc(ref, { ...data, _by: me, _at: Date.now() }, { merge: false })
-          .then(() => flash("☁️ 저장됨"))
-          .catch(() => flash("⚠️ 저장 실패"));
+      saveRemote = async (data, reason = "edit") => {
+        try {
+          const incoming = compactState(data);
+          const remoteSnap = await getDoc(ref);
+          const remoteData = remoteSnap.exists() ? remoteSnap.data() : null;
+          const nextRevision = Math.max(remoteRevision, remoteData?._revision || 0) + 1;
+
+          if (isDangerousOverwrite(incoming, remoteData)) {
+            flash("🛡️ 빈 데이터 덮어쓰기 차단됨");
+            return false;
+          }
+
+          if (hasUserData(remoteData)) {
+            const backupRef = doc(db, "tripBackups", `${TRIP_ID}_${Date.now()}`);
+            setDoc(backupRef, {
+              data: compactState(remoteData),
+              _createdAt: Date.now(),
+              _createdBy: me,
+              _reason: reason,
+              _sourceRevision: remoteData._revision || 0,
+              _dataScore: dataScore(remoteData),
+            }).catch((err) => console.warn("backup failed", err));
+          }
+
+          await setDoc(ref, {
+            ...incoming,
+            _by: me,
+            _at: Date.now(),
+            _revision: nextRevision,
+            _dataScore: dataScore(incoming),
+          }, { merge: false });
+          remoteRevision = nextRevision;
+          flash("☁️ 저장됨");
+          return true;
+        } catch (err) {
+          console.error(err);
+          flash("⚠️ 저장 실패");
+          return false;
+        }
       };
 
       if (isForceRestoreMode()) {
         const recovery = loadRecoveryBackup() || cachedState;
         if (hasUserData(recovery)) {
-          saveRemote(recovery);
+          saveRemote(recovery, "forced-local-restore");
           Object.assign(state, recovery);
           localStorage.setItem("trip_state", JSON.stringify(compactState(recovery)));
           renderAll();
@@ -1190,7 +1303,7 @@ async function boot() {
         if (!snap.exists()) {
           const recovered = mergeRecoveryData(cachedState, null);
           if (shouldRestoreLocal(cachedState, null, recovered)) {
-            saveRemote(recovered);
+            saveRemote(recovered, "auto-local-restore");
             flash("☁️ 로컬 데이터 복구됨");
           }
           return;
@@ -1199,10 +1312,11 @@ async function boot() {
         if (d._by === me) return; // 내가 방금 쓴 건 무시
         const recovered = mergeRecoveryData(cachedState, d);
         if (shouldRestoreLocal(cachedState, d, recovered)) {
-          saveRemote(recovered);
+          saveRemote(recovered, "merge-local-recovery");
           flash("☁️ 로컬 데이터 복구됨");
           return;
         }
+        remoteRevision = d._revision || 0;
         state.days = d.days; state.places = d.places; state.candidates = d.candidates;
         if (d.members) state.members = d.members;
         if (d.expenses) state.expenses = d.expenses;

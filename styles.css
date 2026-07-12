@@ -511,6 +511,21 @@ button, input, select { min-width: 0; }
 .rate-row { font-size: 15px; font-weight: bold; display: flex; align-items: center; gap: 6px; }
 .rate-row input { width: 90px; font-family: inherit; font-size: 15px; font-weight: bold; color: var(--ink); background: #fff; border: 2px solid var(--ink); padding: 7px; }
 .rate-hint { font-size: 10px; color: #a08a5a; margin-top: 7px; }
+.backup-box { background: #f2fff9; }
+.backup-summary { font-size: 11px; color: #6d5f7b; margin-bottom: 8px; }
+.backup-actions { display: flex; gap: 7px; flex-wrap: wrap; }
+.backup-actions button {
+  flex: 1 1 130px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: bold;
+  color: var(--ink);
+  background: var(--mint);
+  border: 2px solid var(--ink);
+  padding: 8px;
+  cursor: pointer;
+}
+.backup-actions button + button { background: #fff; }
 
 /* 데스크탑 */
 @media (min-width: 820px) {
