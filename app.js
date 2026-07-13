@@ -1008,7 +1008,8 @@ async function getStorage() {
   return storageModule;
 }
 
-// 폰 사진은 그대로 올리면 5MB씩 되므로 긴 변 1200px로 줄이고 JPEG로 압축
+// 폰 사진은 원본이 몇 MB씩 되므로, 올리기 전에 긴 변 1200px JPEG로 줄인다.
+// (아이폰 HEIC도 여기서 JPEG로 바뀌므로 Storage에는 항상 JPEG만 올라간다)
 function shrinkImage(file) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -1021,12 +1022,18 @@ function shrinkImage(file) {
       canvas.height = Math.round(img.height * scale);
       canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
       canvas.toBlob(
-        (blob) => (blob ? resolve(blob) : reject(new Error("이미지 변환 실패"))),
+        (blob) => (blob ? resolve(blob) : reject(new Error("이미지 변환에 실패했어요"))),
         "image/jpeg",
         0.82
       );
     };
-    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error("이미지를 읽을 수 없어요")); };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      const heic = /\.(heic|heif)$/i.test(file.name) || /heic|heif/i.test(file.type);
+      reject(new Error(heic
+        ? "이 사진(HEIC)을 못 읽었어요. 사진 앱에서 다시 골라주세요"
+        : "이미지를 읽을 수 없어요"));
+    };
     img.src = objectUrl;
   });
 }
