@@ -714,10 +714,11 @@ button, input, select { min-width: 0; }
 .wish-photo img { width: 100%; height: 100%; object-fit: cover; image-rendering: auto; }
 /* 사진이 없으면 카드가 쓸데없이 길어지지 않도록 낮게 */
 .wish-photo-empty {
-  display: flex; align-items: center; justify-content: center;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
   aspect-ratio: auto; height: 74px;
   font-size: 28px; opacity: .4; cursor: default;
 }
+.wish-photo-empty span { font-size: 10px; font-weight: bold; }
 .wish-photo-count {
   position: absolute; right: 5px; bottom: 5px;
   padding: 2px 5px; font-size: 10px; font-weight: bold;
@@ -902,6 +903,74 @@ button, input, select { min-width: 0; }
 }
 .cropper-actions button {
   min-height: 42px;
+}
+
+/* 쇼핑 상세 */
+.wish-detail-lightbox .lightbox-backdrop { background: rgba(30, 24, 40, .88); }
+.wish-detail-panel {
+  position: absolute; left: 50%; top: 50%; z-index: 2;
+  transform: translate(-50%, -50%);
+  width: min(92vw, 520px);
+  max-height: 88vh;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 12px;
+  overflow: auto;
+  color: var(--ink); background: var(--panel);
+  border: 4px solid var(--ink); box-shadow: 6px 6px 0 rgba(0,0,0,.5);
+}
+.wish-detail-head {
+  display: flex; align-items: center; gap: 10px;
+}
+.wish-detail-head strong {
+  flex: 1; font-size: 16px; line-height: 1.35; overflow-wrap: anywhere;
+}
+.wish-detail-photos {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+}
+.wish-detail-photos button {
+  aspect-ratio: 1 / 1;
+  padding: 0;
+  overflow: hidden;
+  background: var(--panel-2);
+  border: 3px solid var(--ink);
+  cursor: pointer;
+}
+.wish-detail-photos img {
+  width: 100%; height: 100%; object-fit: cover;
+}
+.wish-detail-empty {
+  grid-column: 1 / -1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
+  min-height: 120px;
+  font-family: inherit; font-size: 28px; color: var(--ink);
+}
+.wish-detail-empty span { font-size: 11px; font-weight: bold; }
+.wish-detail-info {
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 10px; background: var(--panel-2);
+  border: 3px solid var(--ink);
+}
+.wish-detail-row {
+  display: flex; gap: 10px; align-items: baseline;
+  font-size: 12px;
+}
+.wish-detail-row span { flex: 0 0 44px; opacity: .7; }
+.wish-detail-row b { flex: 1; overflow-wrap: anywhere; }
+.wish-detail-note {
+  padding-top: 6px; border-top: 2px dashed rgba(91,75,110,.35);
+  font-size: 12px; line-height: 1.45; overflow-wrap: anywhere;
+}
+.wish-detail-actions {
+  display: flex; flex-wrap: wrap; gap: 8px;
+}
+.wish-detail-actions button,
+.wish-detail-actions a {
+  flex: 1 1 130px;
+  padding: 9px 10px;
+  font-family: inherit; font-size: 11px; font-weight: bold; text-align: center; text-decoration: none;
+  color: var(--ink); background: var(--cream);
+  border: 3px solid var(--ink); box-shadow: 2px 2px 0 rgba(0,0,0,.35);
+  cursor: pointer;
 }
 
 @media (max-width: 380px) {

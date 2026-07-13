@@ -19,6 +19,7 @@ let expFormDay = null; // 지출 입력폼이 열린 날짜 id
 let activeTab = "plan";        // 지금 열린 탭 (지도 표시 내용이 달라짐)
 let wishFormOpen = false;      // 사고싶은 것 입력폼 열림 여부
 let wishFormPhotos = [];       // 입력 중인 사진 [{url, alt}]
+let wishPhotoBusy = false;     // 사진 편집/업로드 중 저장 방지
 let wishStoreLatLng = null;    // 입력 중인 매장 좌표 (지도 길게 눌러 지정)
 let wishRouteScope = "mine";   // 동선 계산 대상: "mine" | "all"
 let wishOrigin = null;         // 동선 계산에 쓴 출발 위치
@@ -1486,8 +1487,8 @@ async function recalcShopRoute() {
 
 function wishPhotoHtml(item) {
   const photo = (item.photos || []).map(normalizePhoto).filter(Boolean)[0];
-  if (!photo) return `<div class="wish-photo wish-photo-empty">🛍️</div>`;
-  return `<button class="wish-photo" type="button" data-zoom="${item.id}" aria-label="${escapeHtml(item.name)} 사진 크게 보기">
+  if (!photo) return `<button class="wish-photo wish-photo-empty" type="button" data-addphoto="${item.id}" data-detailwish="${item.id}" aria-label="${escapeHtml(item.name)} 사진 추가">🛍️<span>사진 추가</span></button>`;
+  return `<button class="wish-photo" type="button" data-zoom="${item.id}" data-detailwish="${item.id}" aria-label="${escapeHtml(item.name)} 사진 크게 보기">
     <img src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.alt || item.name)}" loading="lazy" />
     ${(item.photos || []).length > 1 ? `<span class="wish-photo-count">${item.photos.length}</span>` : ""}
   </button>`;
@@ -1498,7 +1499,7 @@ function wishCardHtml(item) {
   const price = item.bought
     ? `<span class="wish-price bought">${yen(wishCost(item))} 씀</span>`
     : (item.price ? `<span class="wish-price">${yen(item.price)}</span>` : "");
-  return `<div class="wish-card ${item.bought ? "wish-bought" : ""}">
+  return `<div class="wish-card ${item.bought ? "wish-bought" : ""}" data-detailwish="${item.id}">
     ${wishPhotoHtml(item)}
     <div class="wish-info">
       <div class="wish-name">${escapeHtml(item.name)}</div>
@@ -1510,6 +1511,7 @@ function wishCardHtml(item) {
     </div>
     <div class="wish-actions">
       ${item.link ? `<a class="icon-btn" href="${escapeHtml(item.link)}" target="_blank" aria-label="상품 링크 열기">🔗</a>` : ""}
+      ${(item.photos || []).length < MAX_WISH_PHOTOS ? `<button class="icon-btn" data-addphoto="${item.id}" aria-label="사진 추가">📷</button>` : ""}
       <button class="icon-btn" data-buy="${item.id}" aria-label="${item.bought ? "안 산 걸로 되돌리기" : "샀다고 표시"}">${item.bought ? "↩" : "✅"}</button>
       <button class="icon-btn" data-delwish="${item.id}" aria-label="삭제">🗑</button>
     </div>
@@ -1663,6 +1665,8 @@ function renderShop() {
 }
 
 function bindShopEvents(el) {
+  let photoClickTimer = null;
+
   el.querySelector("#wishOpen")?.addEventListener("click", () => {
     wishFormOpen = true;
     renderShop();
@@ -1676,6 +1680,7 @@ function bindShopEvents(el) {
     e.target.value = "";
     if (!files.length) return;
     const stateEl = document.getElementById("wishUploadState");
+    wishPhotoBusy = true;
     for (const file of files) {
       if (stateEl) stateEl.textContent = `✂️ ${file.name} 편집 중…`;
       try {
@@ -1691,9 +1696,11 @@ function bindShopEvents(el) {
         console.error(err);
         if (stateEl) stateEl.textContent = `⚠️ 업로드 실패: ${err.message}`;
         flash("⚠️ 사진 업로드 실패");
+        wishPhotoBusy = false;
         return;
       }
     }
+    wishPhotoBusy = false;
     if (stateEl) stateEl.textContent = "";
     renderWishFormPhotos();
   });
@@ -1736,9 +1743,32 @@ function bindShopEvents(el) {
 
   // 사진 확대
   el.querySelectorAll("[data-zoom]").forEach((b) => {
-    b.onclick = () => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      clearTimeout(photoClickTimer);
+      if (e.detail > 1) return;
       const item = (state.wishlist || []).find((i) => i.id === b.dataset.zoom);
-      if (item) openLightbox(item.photos, 0);
+      if (item) photoClickTimer = setTimeout(() => openLightbox(item.photos, 0), 220);
+    };
+  });
+
+  // 더블클릭하면 해당 물건 상세 정보
+  el.querySelectorAll("[data-detailwish]").forEach((node) => {
+    node.ondblclick = (e) => {
+      if (node.classList.contains("wish-card") && e.target.closest(".wish-actions")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      clearTimeout(photoClickTimer);
+      openWishDetail(node.dataset.detailwish);
+    };
+  });
+
+  // 기존 항목에 사진 추가: 빈 사진 영역 또는 📷 버튼
+  el.querySelectorAll("[data-addphoto]").forEach((b) => {
+    b.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      addPhotoToWish(b.dataset.addphoto);
     };
   });
 
@@ -1767,6 +1797,93 @@ function bindShopEvents(el) {
         commit(); renderShop(); renderMap();
       },
     });
+  }
+}
+
+function pickImageFile() {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.onchange = () => resolve(input.files?.[0] || null);
+    input.click();
+  });
+}
+
+function openWishDetail(id) {
+  const item = (state.wishlist || []).find((i) => i.id === id);
+  if (!item) return;
+  const photos = (item.photos || []).map(normalizePhoto).filter(Boolean);
+  const store = item.store?.name
+    ? `<div class="wish-detail-row"><span>매장</span><b>${escapeHtml(item.store.name)}</b></div>`
+    : `<div class="wish-detail-row"><span>매장</span><b>미정</b></div>`;
+  const mapLink = item.store?.mapUrl || (item.store?.lat ? googleMapsSearchUrl(item.store, { preferCoordinates: true }) : "");
+  lightbox.className = "lightbox open wish-detail-lightbox";
+  lightbox.setAttribute("aria-hidden", "false");
+  lightbox.innerHTML = `
+    <div class="lightbox-backdrop" data-close-wish-detail></div>
+    <section class="wish-detail-panel" role="dialog" aria-modal="true" aria-label="${escapeHtml(item.name)} 상세 정보">
+      <div class="wish-detail-head">
+        <strong>${escapeHtml(item.name)}</strong>
+        <button class="lightbox-btn" type="button" data-close-wish-detail aria-label="닫기">×</button>
+      </div>
+      <div class="wish-detail-photos">
+        ${photos.length ? photos.map((photo, i) => `
+          <button type="button" data-detail-photo="${i}" aria-label="사진 ${i + 1} 크게 보기">
+            <img src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.alt || item.name)}" />
+          </button>`).join("") : `<button type="button" class="wish-detail-empty" data-addphoto="${item.id}">🛍️<span>사진 추가</span></button>`}
+      </div>
+      <div class="wish-detail-info">
+        <div class="wish-detail-row"><span>가격</span><b>${item.price ? yen(item.price) : "미정"}${item.bought && item.paid ? ` · 실제 ${yen(item.paid)}` : ""}</b></div>
+        <div class="wish-detail-row"><span>담당</span><b>${escapeHtml(item.owner?.name || "익명")}</b></div>
+        ${store}
+        ${item.note ? `<div class="wish-detail-note">${escapeHtml(item.note)}</div>` : ""}
+      </div>
+      <div class="wish-detail-actions">
+        ${(item.photos || []).length < MAX_WISH_PHOTOS ? `<button type="button" data-addphoto="${item.id}">📷 사진 추가</button>` : ""}
+        ${item.link ? `<a href="${escapeHtml(item.link)}" target="_blank">상품 링크 ↗</a>` : ""}
+        ${mapLink ? `<a href="${escapeHtml(mapLink)}" target="_blank">지도 ↗</a>` : ""}
+      </div>
+    </section>`;
+  lightbox.querySelectorAll("[data-close-wish-detail]").forEach((b) => { b.onclick = closeLightbox; });
+  lightbox.querySelectorAll("[data-detail-photo]").forEach((b) => {
+    b.onclick = () => openLightbox(photos, Number(b.dataset.detailPhoto));
+  });
+  lightbox.querySelectorAll("[data-addphoto]").forEach((b) => {
+    b.onclick = (e) => {
+      e.preventDefault();
+      closeLightbox();
+      addPhotoToWish(b.dataset.addphoto);
+    };
+  });
+}
+
+async function addPhotoToWish(id) {
+  if (wishPhotoBusy) return;
+  const item = (state.wishlist || []).find((i) => i.id === id);
+  if (!item) return;
+  if ((item.photos || []).length >= MAX_WISH_PHOTOS) {
+    flash("사진은 3장까지예요");
+    return;
+  }
+  const file = await pickImageFile();
+  if (!file) return;
+  wishPhotoBusy = true;
+  try {
+    flash("✂️ 사진 편집 중…");
+    const cropped = await openPhotoCropper(file);
+    if (!cropped) return;
+    flash("📤 사진 올리는 중…");
+    const url = await uploadPhoto(cropped);
+    item.photos = [...(item.photos || []), { url, alt: item.name }].slice(0, MAX_WISH_PHOTOS);
+    commit();
+    renderShop();
+    flash("📷 사진 추가됨");
+  } catch (err) {
+    console.error(err);
+    flash(`⚠️ 사진 업로드 실패: ${err.message}`);
+  } finally {
+    wishPhotoBusy = false;
   }
 }
 
@@ -1804,6 +1921,10 @@ function resetWishForm() {
 }
 
 function submitWish() {
+  if (wishPhotoBusy) {
+    alert("사진 업로드가 끝난 뒤 저장해 주세요");
+    return;
+  }
   const name = document.getElementById("wishName").value.trim();
   if (!name) return;
 
