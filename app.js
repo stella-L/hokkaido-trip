@@ -1462,6 +1462,13 @@ function computeShopRoute(origin, groups) {
   return order;
 }
 
+function shoppingSummary(data = state) {
+  const wishlist = data?.wishlist || [];
+  const photos = wishlist.reduce((sum, item) => sum + ((item.photos || []).filter((p) => p?.url).length), 0);
+  const stores = new Set(wishlist.map((item) => storeKey(item.store?.name)).filter(Boolean)).size;
+  return `쇼핑 ${wishlist.length}개 · 사진 ${photos}장 · 매장 ${stores}곳`;
+}
+
 function locateMe() {
   return new Promise((resolve) => {
     if (!navigator.geolocation) return resolve(null);
@@ -1612,6 +1619,16 @@ function renderShop() {
     ? wishFormHtml()
     : `<button class="exp-add wish-add" type="button" id="wishOpen">＋ 사고싶은 것 추가</button>`;
 
+  const backupBox = `<div class="settle-box backup-box wish-backup-box">
+    <div class="settle-title">🛡️ 쇼핑 백업</div>
+    <div class="backup-summary">${shoppingSummary(state)}</div>
+    <div class="backup-actions">
+      <button id="exportShopBackup" type="button">쇼핑 백업 저장</button>
+      <button id="restoreShopBackup" type="button">쇼핑 로컬 복구</button>
+    </div>
+    <div class="rate-hint">쇼핑 목록은 자동 로컬 백업에도 따로 남겨요. 복구해도 일정/정산은 건드리지 않아요.</div>
+  </div>`;
+
   // 동선
   const ordered = orderedShopStores();
   let routeBox = "";
@@ -1682,7 +1699,7 @@ function renderShop() {
     ? `<div class="empty-hint">아직 사고싶은 게 없어요. 사진과 함께 올려보세요!</div>`
     : "";
 
-  el.innerHTML = totalBox + addBox + routeBox + storeSections + noStoreSection + boughtSection + empty;
+  el.innerHTML = totalBox + addBox + backupBox + routeBox + storeSections + noStoreSection + boughtSection + empty;
 
   bindShopEvents(el);
 }
@@ -1697,6 +1714,27 @@ function bindShopEvents(el) {
     document.getElementById("wishName")?.focus();
   });
   el.querySelector("#wishCancel")?.addEventListener("click", resetWishForm);
+  el.querySelector("#exportShopBackup")?.addEventListener("click", () => {
+    downloadShoppingJson(`hokkaido-shopping-${Date.now()}.json`, state);
+    flash("💾 쇼핑 백업 저장됨");
+  });
+  el.querySelector("#restoreShopBackup")?.addEventListener("click", async () => {
+    const recovery = loadShoppingRecoveryBackup();
+    if (!recovery) {
+      alert("이 브라우저에 복구할 쇼핑 백업이 없어요.");
+      return;
+    }
+    if (!confirm(`쇼핑 목록만 로컬 백업으로 복구할까요?\n${shoppingSummary(recovery)}`)) return;
+    state.wishlist = recovery.wishlist || [];
+    state.wishRoute = recovery.wishRoute || [];
+    localStorage.setItem("trip_state", JSON.stringify(serializable()));
+    saveRecoveryBackup(serializable());
+    saveShoppingRecoveryBackup(serializable());
+    renderShop();
+    renderMap();
+    if (saveRemote) await saveRemote(serializable(), "manual-shopping-restore");
+    flash("☁️ 쇼핑 백업 복구됨");
+  });
 
   // 사진 업로드
   el.querySelector("#wishFile")?.addEventListener("change", async (e) => {
@@ -2361,6 +2399,42 @@ function saveRecoveryBackup(data) {
   } catch {}
 }
 
+function compactShoppingData(data) {
+  return {
+    wishlist: data?.wishlist || [],
+    wishRoute: data?.wishRoute || [],
+    _shoppingBackupAt: Date.now(),
+  };
+}
+
+function hasShoppingData(data) {
+  return (data?.wishlist || []).length > 0 || (data?.wishRoute || []).length > 0;
+}
+
+function saveShoppingRecoveryBackup(data) {
+  if (!hasShoppingData(data)) return;
+  try {
+    const payload = JSON.stringify(compactShoppingData(data));
+    localStorage.setItem("trip_shopping_recovery_latest", payload);
+    localStorage.setItem(`trip_shopping_recovery_${Date.now()}`, payload);
+  } catch {}
+}
+
+function loadShoppingRecoveryBackup() {
+  const keys = Object.keys(localStorage)
+    .filter((key) => key === "trip_shopping_recovery_latest" || key.startsWith("trip_shopping_recovery_"))
+    .sort()
+    .reverse();
+  for (const key of keys) {
+    try {
+      const data = JSON.parse(localStorage.getItem(key));
+      if (hasShoppingData(data)) return compactShoppingData(data);
+    } catch {}
+  }
+  const fullRecovery = loadRecoveryBackup();
+  return hasShoppingData(fullRecovery) ? compactShoppingData(fullRecovery) : null;
+}
+
 function loadRecoveryBackup() {
   const keys = Object.keys(localStorage)
     .filter((key) => key === "trip_recovery_latest" || key.startsWith("trip_recovery_"))
@@ -2387,6 +2461,18 @@ function downloadJson(filename, data) {
   URL.revokeObjectURL(url);
 }
 
+function downloadShoppingJson(filename, data) {
+  const blob = new Blob([JSON.stringify(compactShoppingData(data), null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 function isForceRestoreMode() {
   return new URLSearchParams(location.search).has("restoreLocal");
 }
@@ -2396,6 +2482,7 @@ function commit() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveRecoveryBackup(serializable());
+    saveShoppingRecoveryBackup(serializable());
     localStorage.setItem("trip_state", JSON.stringify(serializable()));
     if (saveRemote) saveRemote(serializable());
   }, 300);
@@ -2409,6 +2496,7 @@ async function boot() {
     try {
       cachedState = JSON.parse(cached);
       saveRecoveryBackup(cachedState);
+      saveShoppingRecoveryBackup(cachedState);
       Object.assign(state, cachedState);
     } catch {}
   }
@@ -2474,6 +2562,7 @@ async function boot() {
           saveRemote(recovery, "forced-local-restore");
           Object.assign(state, recovery);
           localStorage.setItem("trip_state", JSON.stringify(compactState(recovery)));
+          saveShoppingRecoveryBackup(recovery);
           renderAll();
           flash("☁️ 강제 복구 저장됨");
           return;
@@ -2509,6 +2598,7 @@ async function boot() {
         if (d.wishRoute) state.wishRoute = d.wishRoute;
         mergeSeedPlaceDetails();
         localStorage.setItem("trip_state", JSON.stringify(serializable()));
+        saveShoppingRecoveryBackup(serializable());
         const rendered = renderAllWhenSafe();
         flash(rendered ? "🔄 업데이트됨" : "🔄 업데이트 대기 중");
       });
