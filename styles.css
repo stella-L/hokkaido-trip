@@ -839,8 +839,76 @@ button, input, select { min-width: 0; }
   white-space: nowrap;
 }
 
+/* 업로드 전 정사각형 크롭 */
+.cropper .lightbox-backdrop { background: rgba(30, 24, 40, .94); }
+.cropper-panel {
+  position: absolute; inset: 12px; z-index: 2;
+  display: flex; flex-direction: column; gap: 12px;
+  max-width: 520px; margin: 0 auto;
+  color: var(--ink);
+}
+.cropper-head {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 46px;
+}
+.cropper-head strong {
+  flex: 1; padding: 10px 12px;
+  font-size: 13px; background: var(--panel);
+  border: 3px solid var(--ink); box-shadow: 3px 3px 0 rgba(0,0,0,.5);
+}
+.cropper-close { flex: 0 0 40px; }
+.cropper-frame-wrap {
+  flex: 1;
+  display: flex; align-items: center; justify-content: center;
+  min-height: 0;
+}
+.cropper-frame {
+  position: relative;
+  width: min(86vw, 430px, 72vh);
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  background: #111;
+  border: 4px solid var(--panel);
+  box-shadow: 0 0 0 3px var(--ink), 5px 5px 0 rgba(0,0,0,.5);
+}
+.cropper-frame::before,
+.cropper-frame::after {
+  content: "";
+  position: absolute; inset: 0; z-index: 2;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, transparent 33.333%, rgba(255,255,255,.55) 33.333%, rgba(255,255,255,.55) calc(33.333% + 1px), transparent calc(33.333% + 1px), transparent 66.666%, rgba(255,255,255,.55) 66.666%, rgba(255,255,255,.55) calc(66.666% + 1px), transparent calc(66.666% + 1px)),
+    linear-gradient(0deg, transparent 33.333%, rgba(255,255,255,.55) 33.333%, rgba(255,255,255,.55) calc(33.333% + 1px), transparent calc(33.333% + 1px), transparent 66.666%, rgba(255,255,255,.55) 66.666%, rgba(255,255,255,.55) calc(66.666% + 1px), transparent calc(66.666% + 1px));
+}
+.cropper-frame img {
+  position: absolute; left: 50%; top: 50%;
+  max-width: none; max-height: none;
+  object-fit: contain;
+  touch-action: none;
+  user-select: none; -webkit-user-drag: none;
+  cursor: grab;
+}
+.cropper-controls {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 11px;
+  background: var(--panel);
+  border: 3px solid var(--ink); box-shadow: 3px 3px 0 rgba(0,0,0,.5);
+}
+.cropper-controls input[type=range] {
+  width: 100%; accent-color: var(--pink);
+}
+.cropper-actions {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+}
+.cropper-actions button {
+  min-height: 42px;
+}
+
 @media (max-width: 380px) {
   .wish-grid { gap: 8px; }
   .wish-name { font-size: 11px; }
   .lightbox-hint { font-size: 9px; }
+  .cropper-panel { inset: 10px; gap: 10px; }
+  .cropper-frame { width: min(84vw, 66vh); }
+  .cropper-head strong { font-size: 12px; }
 }

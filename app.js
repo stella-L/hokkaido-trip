@@ -1039,7 +1039,7 @@ function shrinkImage(file) {
 }
 
 async function uploadPhoto(file) {
-  const blob = await shrinkImage(file);
+  const blob = file instanceof Blob && file.type === "image/jpeg" ? file : await shrinkImage(file);
   const { storage, ref, uploadBytes, getDownloadURL } = await getStorage();
   const name = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
   const fileRef = ref(storage, `wishlist/${TRIP_ID}/${name}`);
@@ -1047,10 +1047,177 @@ async function uploadPhoto(file) {
   return await getDownloadURL(fileRef);
 }
 
-// ───────────────────────── 사진 확대 (라이트박스) ─────────────────────────
+// ───────────────────────── 사진 자르기 / 확대 (라이트박스) ─────────────────────────
 const lightbox = document.getElementById("photoLightbox");
 let lbPhotos = [];
 let lbIndex = 0;
+
+function loadImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => resolve({ img, objectUrl });
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      const heic = /\.(heic|heif)$/i.test(file.name) || /heic|heif/i.test(file.type);
+      reject(new Error(heic
+        ? "이 사진(HEIC)을 못 읽었어요. 사진 앱에서 다시 골라주세요"
+        : "이미지를 읽을 수 없어요"));
+    };
+    img.src = objectUrl;
+  });
+}
+
+function openPhotoCropper(file) {
+  return new Promise(async (resolve, reject) => {
+    let loaded;
+    try {
+      loaded = await loadImageFile(file);
+    } catch (err) {
+      reject(err);
+      return;
+    }
+
+    const { img, objectUrl } = loaded;
+    lightbox.className = "lightbox open cropper";
+    lightbox.setAttribute("aria-hidden", "false");
+    lightbox.innerHTML = `
+      <div class="lightbox-backdrop"></div>
+      <section class="cropper-panel" role="dialog" aria-modal="true" aria-label="사진 자르기">
+        <div class="cropper-head">
+          <strong>사진 위치 맞추기</strong>
+          <button class="lightbox-btn cropper-close" type="button" data-crop-cancel aria-label="취소">×</button>
+        </div>
+        <div class="cropper-frame-wrap">
+          <div class="cropper-frame" id="cropFrame">
+            <img id="cropImage" src="${escapeHtml(objectUrl)}" alt="" draggable="false" />
+          </div>
+        </div>
+        <div class="cropper-controls">
+          <input id="cropZoom" type="range" min="1" max="4" step="0.01" value="1" aria-label="사진 확대" />
+          <div class="cropper-actions">
+            <button class="exp-cancel" type="button" data-crop-cancel>취소</button>
+            <button class="exp-save" type="button" id="cropUse">이대로 올리기</button>
+          </div>
+        </div>
+      </section>`;
+
+    const frame = lightbox.querySelector("#cropFrame");
+    const preview = lightbox.querySelector("#cropImage");
+    const zoomInput = lightbox.querySelector("#cropZoom");
+    const cropSize = PHOTO_MAX_EDGE;
+    let frameSize = 1;
+    let baseScale = 1;
+    let zoom = 1;
+    let tx = 0, ty = 0;
+    const pointers = new Map();
+    let panFrom = null;
+    let pinchStartDist = 0, pinchStartZoom = 1;
+
+    const measure = () => {
+      frameSize = frame.clientWidth || 1;
+      baseScale = Math.max(frameSize / img.naturalWidth, frameSize / img.naturalHeight);
+    };
+    const clamp = () => {
+      const drawW = img.naturalWidth * baseScale * zoom;
+      const drawH = img.naturalHeight * baseScale * zoom;
+      const maxX = Math.max(0, (drawW - frameSize) / 2);
+      const maxY = Math.max(0, (drawH - frameSize) / 2);
+      tx = Math.max(-maxX, Math.min(maxX, tx));
+      ty = Math.max(-maxY, Math.min(maxY, ty));
+    };
+    const apply = () => {
+      measure();
+      clamp();
+      preview.style.width = `${img.naturalWidth * baseScale * zoom}px`;
+      preview.style.height = `${img.naturalHeight * baseScale * zoom}px`;
+      preview.style.transform = `translate(calc(-50% + ${tx}px), calc(-50% + ${ty}px))`;
+      zoomInput.value = String(zoom);
+    };
+    const cleanup = () => {
+      URL.revokeObjectURL(objectUrl);
+      lightbox.className = "lightbox";
+      lightbox.setAttribute("aria-hidden", "true");
+      lightbox.innerHTML = "";
+    };
+    const cancel = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    preview.onpointerdown = (e) => {
+      preview.setPointerCapture(e.pointerId);
+      pointers.set(e.pointerId, e);
+      if (pointers.size === 2) {
+        const [a, b] = [...pointers.values()];
+        pinchStartDist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        pinchStartZoom = zoom;
+        panFrom = null;
+      } else {
+        panFrom = { x: e.clientX - tx, y: e.clientY - ty };
+      }
+    };
+    preview.onpointermove = (e) => {
+      if (!pointers.has(e.pointerId)) return;
+      pointers.set(e.pointerId, e);
+      if (pointers.size >= 2) {
+        const [a, b] = [...pointers.values()];
+        const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        if (pinchStartDist > 0) zoom = Math.max(1, Math.min(4, pinchStartZoom * (dist / pinchStartDist)));
+      } else if (panFrom) {
+        tx = e.clientX - panFrom.x;
+        ty = e.clientY - panFrom.y;
+      }
+      apply();
+    };
+    const pointerEnd = (e) => {
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) pinchStartDist = 0;
+      if (!pointers.size) panFrom = null;
+    };
+    preview.onpointerup = pointerEnd;
+    preview.onpointercancel = pointerEnd;
+    zoomInput.oninput = () => {
+      zoom = Number(zoomInput.value);
+      apply();
+    };
+    window.addEventListener("resize", apply, { once: true });
+    lightbox.querySelectorAll("[data-crop-cancel]").forEach((b) => { b.onclick = cancel; });
+    lightbox.querySelector("#cropUse").onclick = () => {
+      try {
+        measure();
+        clamp();
+        const canvas = document.createElement("canvas");
+        canvas.width = cropSize;
+        canvas.height = cropSize;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, cropSize, cropSize);
+
+        const scale = baseScale * zoom;
+        const sx = (img.naturalWidth / 2) - ((frameSize / 2 + tx) / scale);
+        const sy = (img.naturalHeight / 2) - ((frameSize / 2 + ty) / scale);
+        const sw = frameSize / scale;
+        const sh = frameSize / scale;
+        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, cropSize, cropSize);
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            reject(new Error("사진 자르기에 실패했어요"));
+            cleanup();
+            return;
+          }
+          cleanup();
+          resolve(blob);
+        }, "image/jpeg", 0.86);
+      } catch (err) {
+        cleanup();
+        reject(err);
+      }
+    };
+
+    requestAnimationFrame(apply);
+  });
+}
 
 function openLightbox(photos, index = 0) {
   lbPhotos = (photos || []).map(normalizePhoto).filter(Boolean);
@@ -1498,9 +1665,15 @@ function bindShopEvents(el) {
     if (!files.length) return;
     const stateEl = document.getElementById("wishUploadState");
     for (const file of files) {
-      if (stateEl) stateEl.textContent = `📤 ${file.name} 올리는 중…`;
+      if (stateEl) stateEl.textContent = `✂️ ${file.name} 편집 중…`;
       try {
-        const url = await uploadPhoto(file);
+        const cropped = await openPhotoCropper(file);
+        if (!cropped) {
+          if (stateEl) stateEl.textContent = "";
+          continue;
+        }
+        if (stateEl) stateEl.textContent = `📤 ${file.name} 올리는 중…`;
+        const url = await uploadPhoto(cropped);
         wishFormPhotos.push({ url, alt: "" });
       } catch (err) {
         console.error(err);
