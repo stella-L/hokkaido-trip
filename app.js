@@ -46,6 +46,11 @@ function isMobileLayout() {
   return window.matchMedia("(max-width: 819px)").matches;
 }
 
+function isEditableElement(el = document.activeElement) {
+  if (!el) return false;
+  return ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) || el.isContentEditable;
+}
+
 function setSheetExpanded(expanded) {
   sheetExpanded = !isMobileLayout() || expanded;
   sheet.classList.toggle("sheet-expanded", sheetExpanded);
@@ -58,7 +63,13 @@ function setSheetExpanded(expanded) {
 }
 
 sheetToggle.addEventListener("click", () => setSheetExpanded(!sheetExpanded));
-window.addEventListener("resize", () => setSheetExpanded(sheetExpanded));
+window.addEventListener("resize", () => {
+  if (isEditableElement()) {
+    setTimeout(() => map.resize(), 260);
+    return;
+  }
+  setSheetExpanded(sheetExpanded);
+});
 setSheetExpanded(false);
 
 // ───────────────────────── 지도 (MapLibre) ─────────────────────────
@@ -864,7 +875,7 @@ function renderPlan() {
     b.onclick = () => { expFormDay = b.dataset.day; renderPlan(); };
   });
   el.querySelectorAll(".exp-cancel").forEach((b) => {
-    b.onclick = () => { expFormDay = null; renderPlan(); };
+    b.onclick = () => { expFormDay = null; renderPlan(); flushDeferredRender(); };
   });
   // ¥ ↔ ₩ 자동 환산
   const openForm = el.querySelector(".exp-form");
@@ -893,6 +904,7 @@ function renderPlan() {
       });
       expFormDay = null;
       commit(); renderAll();
+      flushDeferredRender();
     };
   });
   // 지출: 삭제
@@ -1788,6 +1800,7 @@ function resetWishForm() {
   pendingTarget = "candidate";
   if (pendingMarker) { pendingMarker.remove(); pendingMarker = null; }
   renderShop();
+  flushDeferredRender();
 }
 
 function submitWish() {
@@ -1831,6 +1844,7 @@ function submitWish() {
   commit();
   renderShop();
   renderMap();
+  flushDeferredRender();
 }
 
 function toggleBought(id) {
@@ -2017,6 +2031,14 @@ document.querySelectorAll(".tab").forEach((t) => {
 });
 
 // ───────────────────────── 렌더 총괄 ─────────────────────────
+let pendingDeferredRender = false;
+
+function hasActiveEditingUi() {
+  if (wishFormOpen || expFormDay || lightbox.classList.contains("cropper")) return true;
+  const active = document.activeElement;
+  return !!(isEditableElement(active) && active.closest("form"));
+}
+
 function renderAll() {
   renderLegend();
   renderDayFilter();
@@ -2026,6 +2048,23 @@ function renderAll() {
   renderSettle();
   renderMap();
 }
+
+function renderAllWhenSafe() {
+  if (hasActiveEditingUi()) {
+    pendingDeferredRender = true;
+    return false;
+  }
+  pendingDeferredRender = false;
+  renderAll();
+  return true;
+}
+
+function flushDeferredRender() {
+  if (!pendingDeferredRender || hasActiveEditingUi()) return;
+  renderAllWhenSafe();
+}
+
+document.addEventListener("focusout", () => setTimeout(flushDeferredRender, 80));
 
 // ───────────────────────── 저장/동기화 ─────────────────────────
 let saveRemote = null; // Firebase 저장 함수 (설정 시)
@@ -2323,8 +2362,8 @@ async function boot() {
         if (d.wishRoute) state.wishRoute = d.wishRoute;
         mergeSeedPlaceDetails();
         localStorage.setItem("trip_state", JSON.stringify(serializable()));
-        renderAll();
-        flash("🔄 업데이트됨");
+        const rendered = renderAllWhenSafe();
+        flash(rendered ? "🔄 업데이트됨" : "🔄 업데이트 대기 중");
       });
       status.textContent = "☁️ 실시간 공유 켜짐";
     } catch (err) {
