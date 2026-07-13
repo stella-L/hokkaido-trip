@@ -1575,10 +1575,23 @@ function wishFormHtml() {
     </div>
 
     <div class="exp-form-btns">
-      <button type="submit" class="exp-save">저장</button>
+      <button type="submit" class="exp-save" id="wishSave" ${wishPhotoBusy ? "disabled" : ""}>${wishPhotoBusy ? "사진 올리는 중…" : "저장하기"}</button>
       <button type="button" class="exp-cancel" id="wishCancel">취소</button>
     </div>
   </form>`;
+}
+
+function setWishPhotoBusy(busy, message = "") {
+  wishPhotoBusy = busy;
+  const stateEl = document.getElementById("wishUploadState");
+  const saveBtn = document.getElementById("wishSave");
+  const uploadLabel = document.querySelector(".wish-upload");
+  if (stateEl) stateEl.textContent = message;
+  if (saveBtn) {
+    saveBtn.disabled = busy;
+    saveBtn.textContent = busy ? "사진 올리는 중…" : "저장하기";
+  }
+  if (uploadLabel) uploadLabel.classList.toggle("wish-upload-disabled", busy);
 }
 
 function renderShop() {
@@ -1691,29 +1704,25 @@ function bindShopEvents(el) {
     const files = [...e.target.files].slice(0, MAX_WISH_PHOTOS - wishFormPhotos.length);
     e.target.value = "";
     if (!files.length) return;
-    const stateEl = document.getElementById("wishUploadState");
-    wishPhotoBusy = true;
+    setWishPhotoBusy(true, "✂️ 사진 편집 중…");
     for (const file of files) {
-      if (stateEl) stateEl.textContent = `✂️ ${file.name} 편집 중…`;
+      setWishPhotoBusy(true, `✂️ ${file.name} 편집 중…`);
       try {
         const cropped = await openPhotoCropper(file);
         if (!cropped) {
-          if (stateEl) stateEl.textContent = "";
           continue;
         }
-        if (stateEl) stateEl.textContent = `📤 ${file.name} 올리는 중…`;
+        setWishPhotoBusy(true, `📤 ${file.name} 올리는 중…`);
         const url = await uploadPhoto(cropped);
         wishFormPhotos.push({ url, alt: "" });
       } catch (err) {
         console.error(err);
-        if (stateEl) stateEl.textContent = `⚠️ 업로드 실패: ${err.message}`;
+        setWishPhotoBusy(false, `⚠️ 업로드 실패: ${err.message}`);
         flash("⚠️ 사진 업로드 실패");
-        wishPhotoBusy = false;
         return;
       }
     }
-    wishPhotoBusy = false;
-    if (stateEl) stateEl.textContent = "";
+    setWishPhotoBusy(false, "");
     captureWishForm();
     renderWishFormPhotos();
   });
@@ -1881,11 +1890,12 @@ async function addPhotoToWish(id) {
   }
   const file = await pickImageFile();
   if (!file) return;
-  wishPhotoBusy = true;
+  setWishPhotoBusy(true, "✂️ 사진 편집 중…");
   try {
     flash("✂️ 사진 편집 중…");
     const cropped = await openPhotoCropper(file);
     if (!cropped) return;
+    setWishPhotoBusy(true, "📤 사진 올리는 중…");
     flash("📤 사진 올리는 중…");
     const url = await uploadPhoto(cropped);
     item.photos = [...(item.photos || []), { url, alt: item.name }].slice(0, MAX_WISH_PHOTOS);
@@ -1896,7 +1906,7 @@ async function addPhotoToWish(id) {
     console.error(err);
     flash(`⚠️ 사진 업로드 실패: ${err.message}`);
   } finally {
-    wishPhotoBusy = false;
+    setWishPhotoBusy(false, "");
   }
 }
 
@@ -1924,6 +1934,7 @@ function renderWishFormPhotos() {
 
 function resetWishForm() {
   wishFormOpen = false;
+  wishPhotoBusy = false;
   wishFormPhotos = [];
   wishFormDraft = {};
   wishStoreLatLng = null;

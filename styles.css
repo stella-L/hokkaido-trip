@@ -226,7 +226,13 @@ button, input, select { min-width: 0; }
   color: var(--ink); background: var(--mint);
   border: 3px solid var(--ink); box-shadow: 3px 3px 0 var(--shadow); cursor: pointer;
 }
+.cand-form button[type=submit]:disabled {
+  color: #8a7c9a; background: #e6e0ea;
+  border-style: dashed; box-shadow: none;
+  cursor: not-allowed;
+}
 .cand-form button[type=submit]:active { box-shadow: 0 0 0; transform: translate(3px,3px); }
+.cand-form button[type=submit]:disabled:active { transform: none; }
 .cand-form .hint { font-size: 10px; color: #9a8caa; margin: 9px 0 0; }
 
 .cand-list { display: flex; flex-direction: column; gap: 10px; }
@@ -679,8 +685,16 @@ button, input, select { min-width: 0; }
   border: 3px dashed var(--ink);
   cursor: pointer;
 }
+.wish-upload-disabled {
+  opacity: .55;
+  pointer-events: none;
+}
 .wish-upload-full { padding: 9px; text-align: center; font-size: 10px; opacity: .7; }
-.wish-upload-state { font-size: 10px; opacity: .8; min-height: 14px; }
+.wish-upload-state {
+  font-size: 11px; font-weight: bold;
+  color: var(--ink); opacity: .9;
+  min-height: 18px;
+}
 
 /* 매장별 묶음 */
 .wish-store-group { margin-bottom: 16px; }
