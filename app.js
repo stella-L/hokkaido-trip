@@ -1530,6 +1530,15 @@ function captureWishForm() {
   });
 }
 
+function bindWishDraftInputs(scope = document) {
+  WISH_FIELDS.forEach((id) => {
+    const input = scope.getElementById ? scope.getElementById(id) : scope.querySelector(`#${id}`);
+    if (!input) return;
+    input.oninput = () => { wishFormDraft[id] = input.value; };
+    input.onchange = () => { wishFormDraft[id] = input.value; };
+  });
+}
+
 function wishFormHtml() {
   const photos = wishFormPhotos.map((p, i) => `
     <div class="wish-thumb">
@@ -1573,6 +1582,7 @@ function wishFormHtml() {
 }
 
 function renderShop() {
+  captureWishForm();
   const el = document.getElementById("tab-shop");
   const items = state.wishlist || [];
   const mine = items.filter(isMyWish);
@@ -1666,6 +1676,7 @@ function renderShop() {
 
 function bindShopEvents(el) {
   let photoClickTimer = null;
+  bindWishDraftInputs(el);
 
   el.querySelector("#wishOpen")?.addEventListener("click", () => {
     wishFormOpen = true;
@@ -1676,6 +1687,7 @@ function bindShopEvents(el) {
 
   // 사진 업로드
   el.querySelector("#wishFile")?.addEventListener("change", async (e) => {
+    captureWishForm();
     const files = [...e.target.files].slice(0, MAX_WISH_PHOTOS - wishFormPhotos.length);
     e.target.value = "";
     if (!files.length) return;
@@ -1702,6 +1714,7 @@ function bindShopEvents(el) {
     }
     wishPhotoBusy = false;
     if (stateEl) stateEl.textContent = "";
+    captureWishForm();
     renderWishFormPhotos();
   });
 
@@ -1925,7 +1938,9 @@ function submitWish() {
     alert("사진 업로드가 끝난 뒤 저장해 주세요");
     return;
   }
-  const name = document.getElementById("wishName").value.trim();
+  captureWishForm();
+  const fieldValue = (id) => document.getElementById(id)?.value ?? wishFormDraft[id] ?? "";
+  const name = fieldValue("wishName").trim();
   if (!name) return;
 
   if (!myName) {
@@ -1933,9 +1948,9 @@ function submitWish() {
     localStorage.setItem("trip_name", myName);
   }
 
-  const link = document.getElementById("wishLink").value.trim();
-  const storeName = document.getElementById("wishStore").value.trim();
-  const storeUrl = document.getElementById("wishStoreUrl").value.trim();
+  const link = fieldValue("wishLink").trim();
+  const storeName = fieldValue("wishStore").trim();
+  const storeUrl = fieldValue("wishStoreUrl").trim();
   if (storeUrl && !isUsableMapUrl(storeUrl)) {
     alert("매장 지도 링크를 확인해 주세요");
     return;
@@ -1945,11 +1960,11 @@ function submitWish() {
   const fromUrl = parseLatLngFromUrl(storeUrl);
   const coords = wishStoreLatLng || fromUrl;
 
-  const priceInput = document.getElementById("wishPrice").value;
+  const priceInput = fieldValue("wishPrice");
   state.wishlist.push({
     id: "w" + Date.now(),
     name,
-    note: document.getElementById("wishNote").value.trim(),
+    note: fieldValue("wishNote").trim(),
     photos: wishFormPhotos.slice(0, MAX_WISH_PHOTOS),
     link,
     price: priceInput ? Number(priceInput) : null,
