@@ -1079,9 +1079,12 @@ function renderLightbox() {
   lightbox.setAttribute("aria-hidden", "false");
   lightbox.innerHTML = `
     <div class="lightbox-backdrop" data-close-lb></div>
-    <button class="lightbox-close" type="button" data-close-lb aria-label="사진 닫기">×</button>
+    <div class="lightbox-tools">
+      <button class="lightbox-btn" type="button" id="lbSave" aria-label="사진 저장">⬇</button>
+      <button class="lightbox-btn" type="button" data-close-lb aria-label="사진 닫기">×</button>
+    </div>
     <div class="lightbox-stage">
-      <img class="lightbox-img" src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.alt || "사진")}" draggable="false" />
+      <img class="lightbox-img" src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.alt || "사진")}" draggable="false" crossorigin="anonymous" />
     </div>
     ${many ? `
       <button class="lightbox-nav prev" type="button" data-lb-step="-1" aria-label="이전 사진">‹</button>
@@ -1093,7 +1096,41 @@ function renderLightbox() {
   lightbox.querySelectorAll("[data-lb-step]").forEach((b) => {
     b.onclick = () => stepLightbox(Number(b.dataset.lbStep));
   });
+  lightbox.querySelector("#lbSave").onclick = () => savePhoto(photo);
   bindLightboxZoom(lightbox.querySelector(".lightbox-img"));
+}
+
+// 사진을 내 기기에 저장. 아이폰 Safari는 <a download>를 무시하므로
+// 공유 시트(Web Share)를 먼저 시도하고, 안 되면 다운로드로 떨어진다.
+async function savePhoto(photo) {
+  const filename = `${(photo.alt || "hokkaido").replace(/[^\w가-힣]+/g, "_")}-${Date.now()}.jpg`;
+  try {
+    const res = await fetch(photo.url);
+    if (!res.ok) throw new Error("fetch failed");
+    const blob = await res.blob();
+    const file = new File([blob], filename, { type: blob.type || "image/jpeg" });
+
+    if (navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file] });
+      return;
+    }
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    flash("💾 사진 저장됨");
+  } catch (err) {
+    if (err.name === "AbortError") return;   // 사용자가 공유 시트를 닫음
+    console.error(err);
+    // 마지막 수단: 새 탭에서 열어 길게 눌러 저장하도록
+    window.open(photo.url, "_blank");
+    flash("사진을 길게 눌러 저장해 주세요");
+  }
 }
 
 // 핀치 줌 + 드래그 팬 + 더블탭 줌 + 좌우 스와이프
