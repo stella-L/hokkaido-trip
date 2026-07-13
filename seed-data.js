@@ -101,6 +101,15 @@ export const EXPENSES = [];
 // 원화 환산 환율 (¥1 ≈ ₩9.0, 정산 탭에서 수정 가능)
 export const JPY_TO_KRW = 9.0;
 
+// 사고싶은 것 (쇼핑 위시리스트)
+// {id, name, note, photos:[{url,alt}], link, price(엔), store:{name,mapUrl,lat,lng}|null,
+//  owner:{uid,name}, bought, paid(엔)|null}
+// store 가 null 이면 "어디서 살지 미정"
+export const WISHLIST = [];
+
+// 매장 방문 순서 (storeKey 배열) — 최적 동선 계산 결과를 손으로 바꾼 것도 여기 저장
+export const WISH_ROUTE = [];
+
 // 맛집·가고싶은 곳 후보 (친구들이 올리는 곳)
 export const CANDIDATES = [
   { id: "c1", name: "쿠마게라 (향토요리)", nameJa: "くまげら", type: "food", lat: 43.3419, lng: 142.3835, note: "후라노 사슴고기·오리", addedBy: "샘플", votes: [] },

@@ -1,4 +1,4 @@
-import { TYPES, PLACES, DAYS, CANDIDATES, MEMBERS, EXPENSES, JPY_TO_KRW } from "./seed-data.js?v=cluster-anchor-2";
+import { TYPES, PLACES, DAYS, CANDIDATES, MEMBERS, EXPENSES, JPY_TO_KRW, WISHLIST, WISH_ROUTE } from "./seed-data.js?v=shop-1";
 import { firebaseConfig, TRIP_ID } from "./firebase-config.js";
 import { MAPTILER_KEY, MAP_LANG } from "./maptiler-config.js";
 
@@ -10,9 +10,20 @@ let state = {
   members: structuredClone(MEMBERS),
   expenses: structuredClone(EXPENSES),
   krwRate: JPY_TO_KRW,
+  wishlist: structuredClone(WISHLIST),
+  wishRoute: structuredClone(WISH_ROUTE),
 };
 
 let expFormDay = null; // 지출 입력폼이 열린 날짜 id
+
+let activeTab = "plan";        // 지금 열린 탭 (지도 표시 내용이 달라짐)
+let wishFormOpen = false;      // 사고싶은 것 입력폼 열림 여부
+let wishFormPhotos = [];       // 입력 중인 사진 [{url, alt}]
+let wishStoreLatLng = null;    // 입력 중인 매장 좌표 (지도 길게 눌러 지정)
+let wishRouteScope = "mine";   // 동선 계산 대상: "mine" | "all"
+let wishOrigin = null;         // 동선 계산에 쓴 출발 위치
+let wishOriginIsReal = false;  // 실제 GPS 위치인지 (아니면 지도 중심 폴백)
+const MAX_WISH_PHOTOS = 3;
 
 // 내 식별 (투표용) — 브라우저마다 1개, 이름은 처음에 한 번 물음
 let me = localStorage.getItem("trip_uid");
@@ -85,6 +96,7 @@ map.addControl(new maplibregl.AttributionControl({ compact: true }));
 let markers = [];            // 현재 표시중인 마커
 let pendingLatLng = null;    // 후보 등록용 길게-누른 좌표
 let pendingMarker = null;
+let pendingTarget = "candidate"; // 길게 누른 좌표를 어디에 쓸지: "candidate" | "wish"
 let mapReady = false;
 const CLUSTER_MAX_ZOOM = 8.2;
 const CLUSTER_RADIUS_PX = 48;
@@ -121,14 +133,28 @@ map.on("touchstart", (e) => { pressTimer = setTimeout(() => setPending(e.lngLat)
 ["touchend", "touchmove", "movestart"].forEach((ev) => map.on(ev, () => clearTimeout(pressTimer)));
 
 function setPending(lngLat) {
-  pendingLatLng = { lat: lngLat.lat, lng: lngLat.lng };
+  const point = { lat: lngLat.lat, lng: lngLat.lng };
+  const forWish = pendingTarget === "wish";
+
   if (pendingMarker) pendingMarker.remove();
   pendingMarker = new maplibregl.Marker({ color: "#5b4b6e" })
     .setLngLat([lngLat.lng, lngLat.lat])
-    .setPopup(new maplibregl.Popup().setText("여기로 후보 등록"))
+    .setPopup(new maplibregl.Popup().setText(forWish ? "여기를 매장 위치로" : "여기로 후보 등록"))
     .addTo(map);
   pendingMarker.togglePopup();
   setSheetExpanded(true);
+
+  if (forWish) {
+    captureWishForm();
+    wishStoreLatLng = point;
+    pendingTarget = "candidate";
+    document.querySelector('[data-tab="shop"]').click();
+    renderShop();
+    document.getElementById("wishStore")?.focus();
+    return;
+  }
+
+  pendingLatLng = point;
   document.querySelector('[data-tab="candidates"]').click();
   document.getElementById("candName").focus();
 }
@@ -263,10 +289,49 @@ function googleMapsSearchUrl(item, options = {}) {
   return query ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}` : "";
 }
 
+// 붙여넣은 구글맵 URL에서 좌표를 뽑아낼 수 있으면 뽑는다 (단축 링크는 못 뽑음)
+function parseLatLngFromUrl(url) {
+  if (!url) return null;
+  const patterns = [
+    /@(-?\d+\.\d+),(-?\d+\.\d+)/,                          // .../@43.05,141.35,17z
+    /!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/,                      // ...!3d43.05!4d141.35
+    /[?&](?:q|query|destination)=(-?\d+\.\d+),\s*(-?\d+\.\d+)/, // ?query=43.05,141.35
+  ];
+  for (const re of patterns) {
+    const m = url.match(re);
+    if (m) return { lat: Number(m[1]), lng: Number(m[2]) };
+  }
+  return null;
+}
+
+// 매장 하나를 구글맵 경로에 넣을 때 쓰는 표현 (좌표 우선, 없으면 이름)
+function storeWaypoint(store) {
+  if (store.lat && store.lng) return `${store.lat},${store.lng}`;
+  return store.name || "";
+}
+
+// 여러 매장을 한 번에 도는 구글맵 길찾기 링크
+function googleMapsRouteUrl(origin, groups) {
+  const points = groups.map((g) => storeWaypoint(g.store)).filter(Boolean);
+  if (!points.length) return "";
+  const params = new URLSearchParams({ api: "1", travelmode: "driving" });
+  params.set("destination", points[points.length - 1]);
+  if (origin) params.set("origin", `${origin.lat},${origin.lng}`);
+  const waypoints = points.slice(0, -1);
+  if (waypoints.length) params.set("waypoints", waypoints.join("|"));
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
+}
+
 function renderMap({ fit = true } = {}) {
   if (!mapReady) return;
   markers.forEach((m) => m.remove());
   markers = [];
+
+  // 쇼핑 탭에서는 지도가 매장 동선 전용으로 바뀐다
+  if (activeTab === "shop") {
+    renderShopMap({ fit });
+    return;
+  }
 
   const daysToShow = activeDay ? state.days.filter((d) => d.id === activeDay) : state.days;
   const routeFeatures = [];
@@ -322,6 +387,47 @@ function popupHtml(p) {
   return `<b>${TYPES[p.type].emoji} ${p.name}</b><br>${p.nameJa || ""}` +
     (p.note ? `<br><small>${p.note}</small>` : "") +
     `<br><a href="${googleMapsSearchUrl(p)}" target="_blank">구글맵 열기 ↗</a>`;
+}
+
+// 쇼핑 탭 전용 지도: 매장 핀에 방문 순서 번호를 매기고 동선을 잇는다
+function renderShopMap({ fit = true } = {}) {
+  const ordered = orderedShopStores();
+  const coords = [];
+
+  ordered.forEach((group, i) => {
+    const { store } = group;
+    if (!store.lat || !store.lng) return;
+    coords.push([store.lng, store.lat]);
+    const names = group.items.map((it) => escapeHtml(it.name)).join(", ");
+    addMarker(store.lat, store.lng, "shopping", i + 1,
+      `<b>🛍️ ${escapeHtml(store.name)}</b><br><small>${names}</small>` +
+      `<br><a href="${escapeHtml(googleMapsSearchUrl(store))}" target="_blank">구글맵 열기 ↗</a>`);
+  });
+
+  if (wishOrigin && wishOriginIsReal) {
+    const here = new maplibregl.Marker({ color: "#ff9ec9" })
+      .setLngLat([wishOrigin.lng, wishOrigin.lat])
+      .setPopup(new maplibregl.Popup({ offset: 18 }).setHTML("<b>📍 현위치</b>"))
+      .addTo(map);
+    markers.push(here);
+  }
+
+  const src = map.getSource("routes");
+  if (src) {
+    src.setData({
+      type: "FeatureCollection",
+      features: coords.length > 1
+        ? [{ type: "Feature", geometry: { type: "LineString", coordinates: coords } }]
+        : [],
+    });
+  }
+
+  if (fit && coords.length) {
+    const b = new maplibregl.LngLatBounds();
+    coords.forEach((c) => b.extend(c));
+    if (wishOrigin && wishOriginIsReal) b.extend([wishOrigin.lng, wishOrigin.lat]);
+    map.fitBounds(b, { padding: 60, maxZoom: 13, animate: false });
+  }
 }
 
 // ───────────────────────── 범례 ─────────────────────────
@@ -586,6 +692,12 @@ function closePlaceDetail() {
 }
 
 window.addEventListener("keydown", (e) => {
+  if (lbPhotos.length) {
+    if (e.key === "Escape") closeLightbox();
+    if (e.key === "ArrowLeft") stepLightbox(-1);
+    if (e.key === "ArrowRight") stepLightbox(1);
+    return;
+  }
   if (e.key === "Escape" && selectedPlaceId) closePlaceDetail();
 });
 
@@ -878,6 +990,655 @@ function promoteCandidate(c, dayId) {
   if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+// ───────────────────────── 사진 업로드 (Firebase Storage) ─────────────────────────
+const PHOTO_MAX_EDGE = 1200;
+let storageModule = null;
+
+async function getStorage() {
+  if (!firebaseConfig) throw new Error("Firebase가 설정되지 않았어요");
+  if (!storageModule) {
+    storageModule = (async () => {
+      const { initializeApp, getApps } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
+      const { getStorage: fbStorage, ref, uploadBytes, getDownloadURL } =
+        await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js");
+      const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
+      return { storage: fbStorage(app), ref, uploadBytes, getDownloadURL };
+    })();
+  }
+  return storageModule;
+}
+
+// 폰 사진은 그대로 올리면 5MB씩 되므로 긴 변 1200px로 줄이고 JPEG로 압축
+function shrinkImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const scale = Math.min(1, PHOTO_MAX_EDGE / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error("이미지 변환 실패"))),
+        "image/jpeg",
+        0.82
+      );
+    };
+    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error("이미지를 읽을 수 없어요")); };
+    img.src = objectUrl;
+  });
+}
+
+async function uploadPhoto(file) {
+  const blob = await shrinkImage(file);
+  const { storage, ref, uploadBytes, getDownloadURL } = await getStorage();
+  const name = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+  const fileRef = ref(storage, `wishlist/${TRIP_ID}/${name}`);
+  await uploadBytes(fileRef, blob, { contentType: "image/jpeg" });
+  return await getDownloadURL(fileRef);
+}
+
+// ───────────────────────── 사진 확대 (라이트박스) ─────────────────────────
+const lightbox = document.getElementById("photoLightbox");
+let lbPhotos = [];
+let lbIndex = 0;
+
+function openLightbox(photos, index = 0) {
+  lbPhotos = (photos || []).map(normalizePhoto).filter(Boolean);
+  if (!lbPhotos.length) return;
+  lbIndex = Math.max(0, Math.min(index, lbPhotos.length - 1));
+  renderLightbox();
+}
+
+function closeLightbox() {
+  lbPhotos = [];
+  lightbox.className = "lightbox";
+  lightbox.setAttribute("aria-hidden", "true");
+  lightbox.innerHTML = "";
+}
+
+function stepLightbox(delta) {
+  if (lbPhotos.length < 2) return;
+  lbIndex = (lbIndex + delta + lbPhotos.length) % lbPhotos.length;
+  renderLightbox();
+}
+
+function renderLightbox() {
+  const photo = lbPhotos[lbIndex];
+  const many = lbPhotos.length > 1;
+  lightbox.className = "lightbox open";
+  lightbox.setAttribute("aria-hidden", "false");
+  lightbox.innerHTML = `
+    <div class="lightbox-backdrop" data-close-lb></div>
+    <button class="lightbox-close" type="button" data-close-lb aria-label="사진 닫기">×</button>
+    <div class="lightbox-stage">
+      <img class="lightbox-img" src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.alt || "사진")}" draggable="false" />
+    </div>
+    ${many ? `
+      <button class="lightbox-nav prev" type="button" data-lb-step="-1" aria-label="이전 사진">‹</button>
+      <button class="lightbox-nav next" type="button" data-lb-step="1" aria-label="다음 사진">›</button>
+      <div class="lightbox-count">${lbIndex + 1} / ${lbPhotos.length}</div>` : ""}
+    <div class="lightbox-hint">두 손가락으로 확대 · 두 번 탭해도 확대돼요${many ? " · 좌우로 넘기기" : ""}</div>`;
+
+  lightbox.querySelectorAll("[data-close-lb]").forEach((b) => { b.onclick = closeLightbox; });
+  lightbox.querySelectorAll("[data-lb-step]").forEach((b) => {
+    b.onclick = () => stepLightbox(Number(b.dataset.lbStep));
+  });
+  bindLightboxZoom(lightbox.querySelector(".lightbox-img"));
+}
+
+// 핀치 줌 + 드래그 팬 + 더블탭 줌 + 좌우 스와이프
+function bindLightboxZoom(img) {
+  const MAX_SCALE = 4;
+  let scale = 1, tx = 0, ty = 0;
+  const pointers = new Map();
+  let pinchStartDist = 0, pinchStartScale = 1;
+  let panFrom = null, downX = 0, downY = 0, lastTapAt = 0;
+
+  const clamp = () => {
+    if (scale <= 1) { scale = 1; tx = 0; ty = 0; return; }
+    const maxX = (img.clientWidth * (scale - 1)) / 2;
+    const maxY = (img.clientHeight * (scale - 1)) / 2;
+    tx = Math.max(-maxX, Math.min(maxX, tx));
+    ty = Math.max(-maxY, Math.min(maxY, ty));
+  };
+  const apply = () => {
+    img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+    img.classList.toggle("zoomed", scale > 1.01);
+  };
+
+  img.onpointerdown = (e) => {
+    img.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, e);
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinchStartDist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      pinchStartScale = scale;
+      panFrom = null;
+    } else if (pointers.size === 1) {
+      downX = e.clientX; downY = e.clientY;
+      panFrom = { x: e.clientX - tx, y: e.clientY - ty };
+    }
+  };
+
+  img.onpointermove = (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, e);
+
+    if (pointers.size >= 2) {
+      const [a, b] = [...pointers.values()];
+      const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      if (pinchStartDist > 0) {
+        scale = Math.max(1, Math.min(MAX_SCALE, pinchStartScale * (dist / pinchStartDist)));
+        clamp(); apply();
+      }
+      return;
+    }
+
+    if (scale > 1.01 && panFrom) {
+      tx = e.clientX - panFrom.x;
+      ty = e.clientY - panFrom.y;
+      clamp(); apply();
+    }
+  };
+
+  const onPointerEnd = (e) => {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchStartDist = 0;
+    if (pointers.size > 0) return;
+
+    // 확대 안 된 상태에서 옆으로 크게 밀면 사진 넘기기
+    const dx = e.clientX - downX;
+    const dy = e.clientY - downY;
+    if (scale <= 1.01 && Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) {
+      stepLightbox(dx < 0 ? 1 : -1);
+      return;
+    }
+    panFrom = null;
+
+    // 더블탭 줌
+    const now = Date.now();
+    if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+      if (now - lastTapAt < 300) {
+        scale = scale > 1.01 ? 1 : 2.5;
+        tx = 0; ty = 0;
+        clamp(); apply();
+        lastTapAt = 0;
+        return;
+      }
+      lastTapAt = now;
+    }
+  };
+  img.onpointerup = onPointerEnd;
+  img.onpointercancel = onPointerEnd;
+
+  apply();
+}
+
+// ───────────────────────── 쇼핑 탭 ─────────────────────────
+const storeKey = (name) => String(name || "").trim().toLowerCase().replace(/\s+/g, "");
+const isMyWish = (item) => item.owner?.uid === me;
+const wishCost = (item) => (item.paid ?? item.price ?? 0);
+
+// 같은 이름의 매장끼리 묶는다 (들르는 곳은 한 번이니까)
+function groupByStore(items) {
+  const groups = new Map();
+  items.forEach((item) => {
+    const name = item.store?.name;
+    if (!name) return;
+    const key = storeKey(name);
+    if (!groups.has(key)) groups.set(key, { key, store: item.store, items: [] });
+    const group = groups.get(key);
+    group.items.push(item);
+    // 좌표를 가진 매장 정보를 대표로 채택
+    if (!group.store.lat && item.store.lat) group.store = item.store;
+  });
+  return [...groups.values()];
+}
+
+// 동선 계산 대상 = 아직 안 산 물건이 남아있고 좌표가 있는 매장
+function routeStoreGroups() {
+  const scoped = (state.wishlist || []).filter(
+    (item) => !item.bought && (wishRouteScope === "all" || isMyWish(item))
+  );
+  return groupByStore(scoped).filter((g) => g.store.lat && g.store.lng);
+}
+
+// 저장된 순서(state.wishRoute)를 적용하고, 순서에 없는 새 매장은 뒤에 붙인다
+function orderedShopStores() {
+  const byKey = new Map(routeStoreGroups().map((g) => [g.key, g]));
+  const ordered = [];
+  (state.wishRoute || []).forEach((key) => {
+    if (byKey.has(key)) { ordered.push(byKey.get(key)); byKey.delete(key); }
+  });
+  byKey.forEach((g) => ordered.push(g));
+  return ordered;
+}
+
+// 현 위치에서 가장 가까운 매장부터 차례로 (nearest-neighbor)
+function computeShopRoute(origin, groups) {
+  const remaining = [...groups];
+  const order = [];
+  let from = origin;
+  while (remaining.length) {
+    let bestIndex = 0;
+    if (from) {
+      let bestDistance = Infinity;
+      remaining.forEach((g, i) => {
+        const d = haversine(from, { lat: g.store.lat, lng: g.store.lng });
+        if (d < bestDistance) { bestDistance = d; bestIndex = i; }
+      });
+    }
+    const [picked] = remaining.splice(bestIndex, 1);
+    order.push(picked.key);
+    from = { lat: picked.store.lat, lng: picked.store.lng };
+  }
+  return order;
+}
+
+function locateMe() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+    );
+  });
+}
+
+async function recalcShopRoute() {
+  flash("📍 현위치 확인 중…");
+  const located = await locateMe();
+  wishOriginIsReal = !!located;
+  wishOrigin = located || { lat: map.getCenter().lat, lng: map.getCenter().lng };
+  state.wishRoute = computeShopRoute(wishOrigin, routeStoreGroups());
+  commit();
+  renderShop();
+  renderMap();
+  flash(located ? "📍 현위치 기준으로 정렬됨" : "⚠️ 위치를 못 받아 지도 중심 기준으로 정렬");
+}
+
+function wishPhotoHtml(item) {
+  const photo = (item.photos || []).map(normalizePhoto).filter(Boolean)[0];
+  if (!photo) return `<div class="wish-photo wish-photo-empty">🛍️</div>`;
+  return `<button class="wish-photo" type="button" data-zoom="${item.id}" aria-label="${escapeHtml(item.name)} 사진 크게 보기">
+    <img src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.alt || item.name)}" loading="lazy" />
+    ${(item.photos || []).length > 1 ? `<span class="wish-photo-count">${item.photos.length}</span>` : ""}
+  </button>`;
+}
+
+function wishCardHtml(item) {
+  const mine = isMyWish(item);
+  const price = item.bought
+    ? `<span class="wish-price bought">${yen(wishCost(item))} 씀</span>`
+    : (item.price ? `<span class="wish-price">${yen(item.price)}</span>` : "");
+  return `<div class="wish-card ${item.bought ? "wish-bought" : ""}">
+    ${wishPhotoHtml(item)}
+    <div class="wish-info">
+      <div class="wish-name">${escapeHtml(item.name)}</div>
+      ${item.note ? `<div class="wish-note">${escapeHtml(item.note)}</div>` : ""}
+      <div class="wish-meta">
+        ${price}
+        <span class="wish-owner ${mine ? "mine" : ""}">${escapeHtml(item.owner?.name || "익명")}</span>
+      </div>
+    </div>
+    <div class="wish-actions">
+      ${item.link ? `<a class="icon-btn" href="${escapeHtml(item.link)}" target="_blank" aria-label="상품 링크 열기">🔗</a>` : ""}
+      <button class="icon-btn" data-buy="${item.id}" aria-label="${item.bought ? "안 산 걸로 되돌리기" : "샀다고 표시"}">${item.bought ? "↩" : "✅"}</button>
+      <button class="icon-btn" data-delwish="${item.id}" aria-label="삭제">🗑</button>
+    </div>
+  </div>`;
+}
+
+// 지도에서 위치를 찍고 오면 폼이 다시 그려지므로, 입력 중이던 내용을 붙잡아 둔다
+const WISH_FIELDS = ["wishName", "wishPrice", "wishNote", "wishLink", "wishStore", "wishStoreUrl"];
+let wishFormDraft = {};
+
+function captureWishForm() {
+  if (!wishFormOpen) return;
+  WISH_FIELDS.forEach((id) => {
+    const input = document.getElementById(id);
+    if (input) wishFormDraft[id] = input.value;
+  });
+}
+
+function wishFormHtml() {
+  const photos = wishFormPhotos.map((p, i) => `
+    <div class="wish-thumb">
+      <img src="${escapeHtml(p.url)}" alt="" />
+      <button type="button" data-rmphoto="${i}" aria-label="사진 빼기">×</button>
+    </div>`).join("");
+  const slotsLeft = MAX_WISH_PHOTOS - wishFormPhotos.length;
+  const draft = (id) => escapeHtml(wishFormDraft[id] || "");
+
+  return `<form id="wishForm" class="cand-form wish-form">
+    <input id="wishName" placeholder="뭘 사고 싶어요? (예: 로이스 생초콜릿)" value="${draft("wishName")}" required />
+    <div class="cand-form-row">
+      <input id="wishPrice" type="number" inputmode="numeric" placeholder="예상 가격 (¥)" value="${draft("wishPrice")}" />
+      <input id="wishNote" placeholder="메모 (선택)" value="${draft("wishNote")}" />
+    </div>
+    <input id="wishLink" type="url" placeholder="상품 링크 (선택)" value="${draft("wishLink")}" />
+
+    <div class="wish-store-fields">
+      <input id="wishStore" placeholder="어디서 살까요? (비우면 '미정')" value="${draft("wishStore")}" />
+      <input id="wishStoreUrl" type="url" placeholder="매장 구글 지도 링크 (선택)" value="${draft("wishStoreUrl")}" />
+      <div class="wish-store-loc">
+        <button type="button" id="wishPickLoc">📍 지도에서 매장 위치 찍기</button>
+        <span class="wish-loc-state">${wishStoreLatLng ? `위치 지정됨 (${wishStoreLatLng.lat.toFixed(4)}, ${wishStoreLatLng.lng.toFixed(4)})` : "위치 없으면 동선 계산에서 빠져요"}</span>
+      </div>
+    </div>
+
+    <div class="wish-photo-field">
+      <div id="wishPhotos" class="wish-thumbs">${photos}</div>
+      <label class="wish-upload" ${slotsLeft > 0 ? "" : 'style="display:none"'}>
+        <span id="wishUploadLabel">📷 사진 추가 (${slotsLeft}장 더)</span>
+        <input id="wishFile" type="file" accept="image/*" multiple hidden />
+      </label>
+      <div id="wishUploadState" class="wish-upload-state"></div>
+    </div>
+
+    <div class="exp-form-btns">
+      <button type="submit" class="exp-save">저장</button>
+      <button type="button" class="exp-cancel" id="wishCancel">취소</button>
+    </div>
+  </form>`;
+}
+
+function renderShop() {
+  const el = document.getElementById("tab-shop");
+  const items = state.wishlist || [];
+  const mine = items.filter(isMyWish);
+  const spent = mine.filter((i) => i.bought).reduce((s, i) => s + wishCost(i), 0);
+  const planned = mine.filter((i) => !i.bought).reduce((s, i) => s + (i.price || 0), 0);
+
+  const totalBox = `<div class="settle-box wish-total">
+    <div class="settle-title">💸 내가 쓴 돈</div>
+    <div class="settle-total">${yen(spent)} <span class="won">${won(spent)}</span></div>
+    <div class="rate-hint">${planned ? `아직 안 산 것 ${yen(planned)} 예상` : "산 물건을 체크하면 여기 쌓여요"} · 여행 경비 정산과는 따로 계산돼요</div>
+  </div>`;
+
+  const addBox = wishFormOpen
+    ? wishFormHtml()
+    : `<button class="exp-add wish-add" type="button" id="wishOpen">＋ 사고싶은 것 추가</button>`;
+
+  // 동선
+  const ordered = orderedShopStores();
+  let routeBox = "";
+  if (ordered.length >= 2) {
+    let from = wishOrigin;
+    const rows = ordered.map((group, i) => {
+      const here = { lat: group.store.lat, lng: group.store.lng };
+      const leg = from ? `<span class="wish-leg">${driveEst(from, here)}</span>` : "";
+      from = here;
+      return `<li class="wish-route-item" data-key="${escapeHtml(group.key)}">
+        <span class="wish-drag" aria-hidden="true">≡</span>
+        <span class="wish-order">${i + 1}</span>
+        <span class="wish-route-name">${escapeHtml(group.store.name)} <small>(${group.items.length})</small></span>
+        ${leg}
+      </li>`;
+    }).join("");
+
+    routeBox = `<div class="settle-box wish-route-box">
+      <div class="settle-title">
+        🗺️ 쇼핑 동선
+        <span class="wish-scope">
+          <button type="button" class="wish-scope-btn ${wishRouteScope === "mine" ? "active" : ""}" data-scope="mine">내 것</button>
+          <button type="button" class="wish-scope-btn ${wishRouteScope === "all" ? "active" : ""}" data-scope="all">전체</button>
+        </span>
+      </div>
+      <ul class="wish-route" id="wishRouteList">${rows}</ul>
+      <div class="rate-hint">${wishOrigin
+        ? (wishOriginIsReal ? "현위치에서 가까운 순서예요. 끌어서 순서를 바꿀 수 있어요." : "위치를 못 받아 지도 중심 기준이에요. 끌어서 바꿔도 돼요.")
+        : "아래 버튼을 누르면 현위치에서 가까운 순서로 정렬해요."}</div>
+      <div class="backup-actions">
+        <button type="button" id="wishLocate">📍 현위치 기준 다시 계산</button>
+        <a class="wish-gmaps" href="${escapeHtml(googleMapsRouteUrl(wishOrigin, ordered))}" target="_blank">구글맵으로 전체 코스 열기 ↗</a>
+      </div>
+    </div>`;
+  }
+
+  // 매장별 / 미정 / 산 것
+  const active = items.filter((i) => !i.bought);
+  const bought = items.filter((i) => i.bought);
+  const storeGroups = groupByStore(active);
+  const noStore = active.filter((i) => !i.store?.name);
+
+  const orderIndex = new Map(orderedShopStores().map((g, i) => [g.key, i]));
+  storeGroups.sort((a, b) => (orderIndex.get(a.key) ?? 99) - (orderIndex.get(b.key) ?? 99));
+
+  const storeSections = storeGroups.map((group) => {
+    const mapHref = googleMapsSearchUrl(group.store, { preferCoordinates: true });
+    return `<div class="wish-store-group">
+      <div class="wish-store-head">
+        <span class="wish-store-name">🛍️ ${escapeHtml(group.store.name)} <small>(${group.items.length})</small></span>
+        ${mapHref ? `<a class="cand-map" href="${escapeHtml(mapHref)}" target="_blank">지도 ↗</a>` : ""}
+      </div>
+      <div class="wish-grid">${group.items.map(wishCardHtml).join("")}</div>
+    </div>`;
+  }).join("");
+
+  const noStoreSection = noStore.length ? `<div class="wish-store-group">
+    <div class="wish-store-head"><span class="wish-store-name">📦 어디서 살지 미정 <small>(${noStore.length})</small></span></div>
+    <div class="wish-grid">${noStore.map(wishCardHtml).join("")}</div>
+  </div>` : "";
+
+  const boughtSection = bought.length ? `<div class="wish-store-group">
+    <div class="wish-store-head"><span class="wish-store-name">✅ 산 것 <small>(${bought.length})</small></span></div>
+    <div class="wish-grid">${bought.map(wishCardHtml).join("")}</div>
+  </div>` : "";
+
+  const empty = !items.length
+    ? `<div class="empty-hint">아직 사고싶은 게 없어요. 사진과 함께 올려보세요!</div>`
+    : "";
+
+  el.innerHTML = totalBox + addBox + routeBox + storeSections + noStoreSection + boughtSection + empty;
+
+  bindShopEvents(el);
+}
+
+function bindShopEvents(el) {
+  el.querySelector("#wishOpen")?.addEventListener("click", () => {
+    wishFormOpen = true;
+    renderShop();
+    document.getElementById("wishName")?.focus();
+  });
+  el.querySelector("#wishCancel")?.addEventListener("click", resetWishForm);
+
+  // 사진 업로드
+  el.querySelector("#wishFile")?.addEventListener("change", async (e) => {
+    const files = [...e.target.files].slice(0, MAX_WISH_PHOTOS - wishFormPhotos.length);
+    e.target.value = "";
+    if (!files.length) return;
+    const stateEl = document.getElementById("wishUploadState");
+    for (const file of files) {
+      if (stateEl) stateEl.textContent = `📤 ${file.name} 올리는 중…`;
+      try {
+        const url = await uploadPhoto(file);
+        wishFormPhotos.push({ url, alt: "" });
+      } catch (err) {
+        console.error(err);
+        if (stateEl) stateEl.textContent = `⚠️ 업로드 실패: ${err.message}`;
+        flash("⚠️ 사진 업로드 실패");
+        return;
+      }
+    }
+    if (stateEl) stateEl.textContent = "";
+    renderWishFormPhotos();
+  });
+
+  el.querySelectorAll("[data-rmphoto]").forEach((b) => {
+    b.onclick = () => {
+      wishFormPhotos.splice(Number(b.dataset.rmphoto), 1);
+      renderWishFormPhotos();
+    };
+  });
+
+  // 지도에서 매장 위치 찍기
+  el.querySelector("#wishPickLoc")?.addEventListener("click", () => {
+    captureWishForm();
+    pendingTarget = "wish";
+    setSheetExpanded(false);
+    flash("📍 지도를 길게 눌러 매장 위치를 찍어주세요");
+  });
+
+  // 저장
+  el.querySelector("#wishForm")?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    submitWish();
+  });
+
+  // 샀다 / 안 샀다
+  el.querySelectorAll("[data-buy]").forEach((b) => {
+    b.onclick = () => toggleBought(b.dataset.buy);
+  });
+
+  // 삭제
+  el.querySelectorAll("[data-delwish]").forEach((b) => {
+    b.onclick = () => {
+      const item = (state.wishlist || []).find((i) => i.id === b.dataset.delwish);
+      if (!item || !confirm(`"${item.name}"을(를) 목록에서 뺄까요?`)) return;
+      state.wishlist = state.wishlist.filter((i) => i.id !== item.id);
+      commit(); renderShop(); renderMap();
+    };
+  });
+
+  // 사진 확대
+  el.querySelectorAll("[data-zoom]").forEach((b) => {
+    b.onclick = () => {
+      const item = (state.wishlist || []).find((i) => i.id === b.dataset.zoom);
+      if (item) openLightbox(item.photos, 0);
+    };
+  });
+
+  // 동선 대상 전환
+  el.querySelectorAll("[data-scope]").forEach((b) => {
+    b.onclick = () => {
+      wishRouteScope = b.dataset.scope;
+      renderShop(); renderMap();
+    };
+  });
+
+  el.querySelector("#wishLocate")?.addEventListener("click", recalcShopRoute);
+
+  // 동선 드래그 재정렬
+  const routeList = el.querySelector("#wishRouteList");
+  if (routeList) {
+    new Sortable(routeList, {
+      animation: 150,
+      ghostClass: "sortable-ghost",
+      delay: 120, delayOnTouchOnly: true,
+      onEnd: () => {
+        const dragged = [...routeList.querySelectorAll(".wish-route-item")].map((li) => li.dataset.key);
+        // 화면에 없는 매장(다른 scope의 것)의 순서는 그대로 뒤에 남긴다
+        const rest = (state.wishRoute || []).filter((k) => !dragged.includes(k));
+        state.wishRoute = [...dragged, ...rest];
+        commit(); renderShop(); renderMap();
+      },
+    });
+  }
+}
+
+function renderWishFormPhotos() {
+  const wrap = document.getElementById("wishPhotos");
+  if (!wrap) return;
+  // 폼 전체를 다시 그리면 입력 중인 글자가 날아가므로 사진 영역만 갈아끼운다
+  wrap.innerHTML = wishFormPhotos.map((p, i) => `
+    <div class="wish-thumb">
+      <img src="${escapeHtml(p.url)}" alt="" />
+      <button type="button" data-rmphoto="${i}" aria-label="사진 빼기">×</button>
+    </div>`).join("");
+  wrap.querySelectorAll("[data-rmphoto]").forEach((b) => {
+    b.onclick = () => {
+      wishFormPhotos.splice(Number(b.dataset.rmphoto), 1);
+      renderWishFormPhotos();
+    };
+  });
+  const label = document.querySelector(".wish-upload");
+  const labelText = document.getElementById("wishUploadLabel");
+  const left = MAX_WISH_PHOTOS - wishFormPhotos.length;
+  if (labelText) labelText.textContent = `📷 사진 추가 (${left}장 더)`;
+  if (label) label.style.display = left > 0 ? "" : "none";
+}
+
+function resetWishForm() {
+  wishFormOpen = false;
+  wishFormPhotos = [];
+  wishFormDraft = {};
+  wishStoreLatLng = null;
+  pendingTarget = "candidate";
+  if (pendingMarker) { pendingMarker.remove(); pendingMarker = null; }
+  renderShop();
+}
+
+function submitWish() {
+  const name = document.getElementById("wishName").value.trim();
+  if (!name) return;
+
+  if (!myName) {
+    myName = prompt("이름을 알려주세요 (물건에 표시돼요)") || "익명";
+    localStorage.setItem("trip_name", myName);
+  }
+
+  const link = document.getElementById("wishLink").value.trim();
+  const storeName = document.getElementById("wishStore").value.trim();
+  const storeUrl = document.getElementById("wishStoreUrl").value.trim();
+  if (storeUrl && !isUsableMapUrl(storeUrl)) {
+    alert("매장 지도 링크를 확인해 주세요");
+    return;
+  }
+
+  // 좌표: 지도에서 찍은 게 우선, 없으면 붙여넣은 URL에서 뽑아본다
+  const fromUrl = parseLatLngFromUrl(storeUrl);
+  const coords = wishStoreLatLng || fromUrl;
+
+  const priceInput = document.getElementById("wishPrice").value;
+  state.wishlist.push({
+    id: "w" + Date.now(),
+    name,
+    note: document.getElementById("wishNote").value.trim(),
+    photos: wishFormPhotos.slice(0, MAX_WISH_PHOTOS),
+    link,
+    price: priceInput ? Number(priceInput) : null,
+    store: storeName
+      ? { name: storeName, mapUrl: storeUrl, lat: coords?.lat ?? null, lng: coords?.lng ?? null }
+      : null,
+    owner: { uid: me, name: myName },
+    bought: false,
+    paid: null,
+  });
+
+  resetWishForm();
+  commit();
+  renderShop();
+  renderMap();
+}
+
+function toggleBought(id) {
+  const item = (state.wishlist || []).find((i) => i.id === id);
+  if (!item) return;
+
+  if (item.bought) {
+    item.bought = false;
+    item.paid = null;
+  } else {
+    const answer = prompt(`"${item.name}" 얼마 주고 샀어요? (¥, 비우면 예상가 ${item.price ? yen(item.price) : "없음"})`, item.price ?? "");
+    if (answer === null) return;
+    const paid = answer.trim() ? Number(answer) : null;
+    if (paid !== null && (Number.isNaN(paid) || paid < 0)) {
+      alert("금액을 숫자로 입력해 주세요");
+      return;
+    }
+    item.bought = true;
+    item.paid = paid;
+  }
+  commit();
+  renderShop();
+  renderMap();
+}
+
 // ───────────────────────── 정산 탭 ─────────────────────────
 function renderSettle() {
   const el = document.getElementById("tab-settle");
@@ -1030,6 +1791,10 @@ document.querySelectorAll(".tab").forEach((t) => {
     document.getElementById("tab-" + t.dataset.tab).classList.add("active");
     // 날짜 필터는 일정 탭에서만
     document.getElementById("dayFilter").style.display = t.dataset.tab === "plan" ? "flex" : "none";
+    // 쇼핑 탭이면 지도가 매장 동선으로 바뀐다
+    const changed = activeTab !== t.dataset.tab;
+    activeTab = t.dataset.tab;
+    if (changed) renderMap();
     setTimeout(() => map.resize(), 100);
   };
 });
@@ -1040,6 +1805,7 @@ function renderAll() {
   renderDayFilter();
   renderPlan();
   renderCandidates();
+  renderShop();
   renderSettle();
   renderMap();
 }
@@ -1053,6 +1819,7 @@ function serializable() {
   return {
     days: state.days, places: state.places, candidates: state.candidates,
     members: state.members, expenses: state.expenses, krwRate: state.krwRate,
+    wishlist: state.wishlist, wishRoute: state.wishRoute,
   };
 }
 
@@ -1063,6 +1830,8 @@ const seedState = {
   members: MEMBERS,
   expenses: EXPENSES,
   krwRate: JPY_TO_KRW,
+  wishlist: WISHLIST,
+  wishRoute: WISH_ROUTE,
 };
 
 function compactState(data) {
@@ -1073,6 +1842,8 @@ function compactState(data) {
     members: data?.members || [],
     expenses: data?.expenses || [],
     krwRate: data?.krwRate || JPY_TO_KRW,
+    wishlist: data?.wishlist || [],
+    wishRoute: data?.wishRoute || [],
   };
 }
 
@@ -1086,13 +1857,14 @@ function dataScore(data) {
     votes * 2 +
     d.members.length * 8 +
     d.expenses.length * 12 +
+    d.wishlist.length * 6 +
     scheduledStops
   );
 }
 
 function dataSummary(data) {
   const d = compactState(data);
-  return `후보 ${d.candidates.length}개 · 멤버 ${d.members.length}명 · 지출 ${d.expenses.length}개`;
+  return `후보 ${d.candidates.length}개 · 쇼핑 ${d.wishlist.length}개 · 멤버 ${d.members.length}명 · 지출 ${d.expenses.length}개`;
 }
 
 function mergeById(primaryItems, recoveryItems, mergeItem = (_, recovery) => recovery) {
@@ -1125,6 +1897,7 @@ function isSeedLikeData(data) {
   return (
     d.members.length === 0 &&
     d.expenses.length === 0 &&
+    d.wishlist.length === 0 &&
     JSON.stringify(d.days) === JSON.stringify(seed.days) &&
     JSON.stringify(d.candidates) === JSON.stringify(seed.candidates)
   );
@@ -1141,6 +1914,8 @@ function mergeRecoveryData(localData, remoteData) {
     members: mergeById(remote.members, local.members),
     expenses: mergeById(remote.expenses, local.expenses),
     krwRate: remoteHasUserData ? remote.krwRate : local.krwRate,
+    wishlist: mergeById(remote.wishlist, local.wishlist),
+    wishRoute: remoteHasUserData && remote.wishRoute.length ? remote.wishRoute : local.wishRoute,
   };
 }
 
@@ -1165,10 +1940,13 @@ function isDangerousOverwrite(incomingData, remoteData) {
   const dropsCandidates = remote.candidates.length >= 3 && incoming.candidates.length <= Math.floor(remote.candidates.length * 0.4);
   const dropsMembers = remote.members.length >= 2 && incoming.members.length <= Math.floor(remote.members.length * 0.4);
   const dropsExpenses = remote.expenses.length >= 2 && incoming.expenses.length <= Math.floor(remote.expenses.length * 0.4);
+  // 위시리스트는 한두 개만 남았을 때 지우는 게 정상이라 "전부 비움"을 차단하지 않는다.
+  // 여러 개가 한꺼번에 사라지는 경우만 의심한다.
+  const dropsWishlist = remote.wishlist.length >= 3 && incoming.wishlist.length <= Math.floor(remote.wishlist.length * 0.4);
   const muchSmaller = dataScore(incoming) < dataScore(remote) * 0.55;
   if (clearsCandidates || clearsMembers || clearsExpenses) return true;
   if (dropsMembers || dropsExpenses) return true;
-  return muchSmaller && (dropsCandidates || dropsMembers || dropsExpenses);
+  return muchSmaller && (dropsCandidates || dropsMembers || dropsExpenses || dropsWishlist);
 }
 
 function saveRecoveryBackup(data) {
@@ -1231,6 +2009,9 @@ async function boot() {
       Object.assign(state, cachedState);
     } catch {}
   }
+  // 쇼핑 기능 이전에 저장된 데이터에는 wishlist가 없으므로 빈 배열로 채워둔다
+  if (!Array.isArray(state.wishlist)) state.wishlist = [];
+  if (!Array.isArray(state.wishRoute)) state.wishRoute = [];
   mergeSeedPlaceDetails();
   renderAll();
 
@@ -1321,6 +2102,8 @@ async function boot() {
         if (d.members) state.members = d.members;
         if (d.expenses) state.expenses = d.expenses;
         if (d.krwRate) state.krwRate = d.krwRate;
+        if (d.wishlist) state.wishlist = d.wishlist;
+        if (d.wishRoute) state.wishRoute = d.wishRoute;
         mergeSeedPlaceDetails();
         localStorage.setItem("trip_state", JSON.stringify(serializable()));
         renderAll();

@@ -16,7 +16,7 @@
   <!-- SortableJS (드래그앤드롭) -->
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 
-  <link rel="stylesheet" href="styles.css?v=safety-1" />
+  <link rel="stylesheet" href="styles.css?v=shop-1" />
 </head>
 <body>
   <!-- 상단 지도 -->
@@ -34,6 +34,7 @@
     <div class="tabs">
       <button class="tab active" data-tab="plan">📅 일정</button>
       <button class="tab" data-tab="candidates">📌 가고싶은 곳</button>
+      <button class="tab" data-tab="shop">🛍️ 쇼핑</button>
       <button class="tab" data-tab="settle">💰 정산</button>
     </div>
 
@@ -64,14 +65,18 @@
       <div id="candList" class="cand-list"></div>
     </div>
 
+    <!-- 쇼핑 탭 -->
+    <div id="tab-shop" class="tab-panel"></div>
+
     <!-- 정산 탭 -->
     <div id="tab-settle" class="tab-panel"></div>
   </div>
 
   <div id="placeDetail" class="place-detail" aria-hidden="true"></div>
+  <div id="photoLightbox" class="lightbox" aria-hidden="true"></div>
 
   <div id="syncStatus" class="sync-status">저장 준비 중…</div>
 
-  <script type="module" src="app.js?v=safety-2"></script>
+  <script type="module" src="app.js?v=shop-1"></script>
 </body>
 </html>

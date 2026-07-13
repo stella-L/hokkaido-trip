@@ -113,9 +113,9 @@ button, input, select { min-width: 0; }
 }
 
 /* 탭 */
-.tabs { display: flex; gap: 8px; padding: 2px 12px 8px; flex-shrink: 0; }
+.tabs { display: flex; gap: 6px; padding: 2px 12px 8px; flex-shrink: 0; }
 .tab {
-  flex: 1; min-height: 42px; padding: 8px 6px; font-family: inherit; font-size: 12px; font-weight: bold;
+  flex: 1; min-height: 42px; padding: 8px 3px; font-family: inherit; font-size: 11px; font-weight: bold;
   color: var(--ink); background: var(--panel);
   border: 3px solid var(--ink); box-shadow: 3px 3px 0 var(--shadow);
   cursor: pointer;
@@ -623,7 +623,7 @@ button, input, select { min-width: 0; }
 }
 
 @media (max-width: 380px) {
-  .tab { font-size: 10px; padding-inline: 4px; }
+  .tab { font-size: 10px; padding-inline: 2px; }
   .day-date { font-size: 13px; }
   .day-week,
   .day-title,
@@ -632,4 +632,211 @@ button, input, select { min-width: 0; }
   .cand-form select {
     font-size: 11px;
   }
+}
+
+/* ───────────────── 쇼핑 탭 ───────────────── */
+.wish-total .settle-total { font-size: 16px; }
+.wish-add { width: 100%; margin-bottom: 14px; }
+
+/* 입력 폼 */
+.wish-form { margin-bottom: 14px; }
+.wish-store-fields {
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 9px; margin-top: 2px;
+  background: var(--panel-2);
+  border: 3px solid var(--ink);
+}
+.wish-store-loc { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.wish-store-loc button {
+  padding: 7px 9px; font-family: inherit; font-size: 11px; font-weight: bold;
+  color: var(--ink); background: var(--sky);
+  border: 3px solid var(--ink); box-shadow: 2px 2px 0 var(--shadow);
+  cursor: pointer;
+}
+.wish-store-loc button:active { box-shadow: 0 0 0 var(--shadow); transform: translate(2px,2px); }
+.wish-loc-state { flex: 1; font-size: 10px; opacity: .75; line-height: 1.4; }
+
+.wish-photo-field { display: flex; flex-direction: column; gap: 7px; margin-top: 2px; }
+.wish-thumbs { display: flex; gap: 7px; flex-wrap: wrap; }
+.wish-thumb { position: relative; width: 72px; height: 72px; }
+.wish-thumb img {
+  width: 100%; height: 100%; object-fit: cover;
+  border: 3px solid var(--ink); box-shadow: 2px 2px 0 var(--shadow);
+  image-rendering: auto;
+}
+.wish-thumb button {
+  position: absolute; top: -7px; right: -7px;
+  width: 22px; height: 22px; padding: 0;
+  font-family: inherit; font-size: 12px; font-weight: bold; line-height: 1;
+  color: var(--ink); background: var(--cream);
+  border: 2px solid var(--ink);
+  cursor: pointer;
+}
+.wish-upload {
+  display: block; padding: 11px; text-align: center;
+  font-size: 11px; font-weight: bold; color: var(--ink);
+  background: var(--cream);
+  border: 3px dashed var(--ink);
+  cursor: pointer;
+}
+.wish-upload-full { padding: 9px; text-align: center; font-size: 10px; opacity: .7; }
+.wish-upload-state { font-size: 10px; opacity: .8; min-height: 14px; }
+
+/* 매장별 묶음 */
+.wish-store-group { margin-bottom: 16px; }
+.wish-store-head {
+  display: flex; align-items: center; gap: 8px; padding: 9px 11px;
+  background: var(--mint); color: var(--ink);
+  border: 3px solid var(--ink); box-shadow: 3px 3px 0 var(--shadow);
+}
+.wish-store-name { flex: 1; font-size: 12px; font-weight: bold; overflow-wrap: anywhere; }
+.wish-store-name small { font-weight: normal; opacity: .8; }
+/* 좁은 화면에서 .cand-map 이 full-width로 늘어나는 규칙을 매장 헤더에서는 끈다 */
+.wish-store-head .cand-map { flex: 0 0 auto; }
+
+/* 물건 카드 — 사진이 주인공 */
+.wish-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  margin-top: 10px;
+}
+.wish-card {
+  display: flex; flex-direction: column;
+  background: var(--panel);
+  border: 3px solid var(--ink); box-shadow: 4px 4px 0 var(--shadow);
+  overflow: hidden;
+}
+.wish-photo {
+  position: relative; display: block; width: 100%; aspect-ratio: 1 / 1;
+  padding: 0; background: var(--panel-2);
+  border: 0; border-bottom: 3px solid var(--ink);
+  cursor: zoom-in;
+}
+.wish-photo img { width: 100%; height: 100%; object-fit: cover; image-rendering: auto; }
+/* 사진이 없으면 카드가 쓸데없이 길어지지 않도록 낮게 */
+.wish-photo-empty {
+  display: flex; align-items: center; justify-content: center;
+  aspect-ratio: auto; height: 74px;
+  font-size: 28px; opacity: .4; cursor: default;
+}
+.wish-photo-count {
+  position: absolute; right: 5px; bottom: 5px;
+  padding: 2px 5px; font-size: 10px; font-weight: bold;
+  color: var(--ink); background: var(--cream);
+  border: 2px solid var(--ink);
+}
+.wish-info { flex: 1; padding: 8px 9px; }
+.wish-name { font-size: 12px; font-weight: bold; line-height: 1.35; overflow-wrap: anywhere; }
+.wish-note { margin-top: 3px; font-size: 10px; opacity: .75; line-height: 1.4; overflow-wrap: anywhere; }
+.wish-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.wish-price { font-size: 11px; font-weight: bold; }
+.wish-price.bought { opacity: .7; }
+.wish-owner {
+  padding: 2px 6px; font-size: 10px; font-weight: bold;
+  color: var(--ink); background: var(--lav);
+  border: 2px solid var(--ink);
+}
+.wish-owner.mine { background: var(--pink); }
+.wish-actions {
+  display: flex; gap: 4px; padding: 6px 8px;
+  border-top: 3px solid var(--ink); background: var(--panel-2);
+}
+.wish-actions .icon-btn { flex: 1; text-align: center; }
+.wish-card.wish-bought { opacity: .55; }
+.wish-card.wish-bought .wish-photo img { filter: grayscale(.6); }
+
+/* 동선 */
+.wish-route-box .settle-title { display: flex; align-items: center; gap: 8px; }
+.wish-scope { display: flex; gap: 4px; margin-left: auto; }
+.wish-scope-btn {
+  padding: 4px 8px; font-family: inherit; font-size: 10px; font-weight: bold;
+  color: var(--ink); background: var(--panel);
+  border: 2px solid var(--ink);
+  cursor: pointer;
+}
+.wish-scope-btn.active { background: var(--sky); }
+.wish-route { list-style: none; margin: 8px 0; padding: 0; }
+.wish-route-item {
+  display: flex; align-items: center; gap: 7px;
+  padding: 8px; margin-bottom: 6px;
+  background: var(--panel-2);
+  border: 3px solid var(--ink);
+}
+.wish-drag { cursor: grab; font-size: 14px; opacity: .5; touch-action: none; }
+.wish-order {
+  flex: 0 0 22px; width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: bold;
+  color: #fff; background: #10b981;
+  border: 2px solid var(--ink);
+}
+.wish-route-name { flex: 1; font-size: 11px; font-weight: bold; overflow-wrap: anywhere; }
+.wish-route-name small { font-weight: normal; opacity: .7; }
+.wish-leg { font-size: 10px; opacity: .75; text-align: right; }
+.wish-gmaps {
+  padding: 8px 10px; font-size: 11px; font-weight: bold; text-decoration: none;
+  color: var(--ink); background: var(--sky);
+  border: 3px solid var(--ink); box-shadow: 2px 2px 0 var(--shadow);
+}
+
+/* 사진 확대 (라이트박스) */
+.lightbox { display: none; }
+.lightbox.open {
+  display: block; position: fixed; inset: 0; z-index: 1200;
+}
+.lightbox-backdrop { position: absolute; inset: 0; background: rgba(30, 24, 40, .92); }
+.lightbox-stage {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  overflow: hidden;
+}
+.lightbox-img {
+  max-width: 100%; max-height: 100%;
+  object-fit: contain;
+  image-rendering: auto;
+  touch-action: none;
+  cursor: zoom-in;
+  transform-origin: center center;
+  user-select: none; -webkit-user-drag: none;
+}
+.lightbox-img.zoomed { cursor: grab; }
+.lightbox-close {
+  position: absolute; top: 14px; right: 14px; z-index: 2;
+  width: 40px; height: 40px; padding: 0;
+  font-family: inherit; font-size: 20px; font-weight: bold; line-height: 1;
+  color: var(--ink); background: var(--panel);
+  border: 3px solid var(--ink); box-shadow: 3px 3px 0 rgba(0,0,0,.5);
+  cursor: pointer;
+}
+.lightbox-nav {
+  position: absolute; top: 50%; z-index: 2;
+  transform: translateY(-50%);
+  width: 40px; height: 52px; padding: 0;
+  font-family: inherit; font-size: 22px; font-weight: bold; line-height: 1;
+  color: var(--ink); background: var(--panel);
+  border: 3px solid var(--ink); box-shadow: 3px 3px 0 rgba(0,0,0,.5);
+  cursor: pointer;
+}
+.lightbox-nav.prev { left: 10px; }
+.lightbox-nav.next { right: 10px; }
+.lightbox-count {
+  position: absolute; top: 20px; left: 50%; z-index: 2;
+  transform: translateX(-50%);
+  padding: 5px 10px; font-size: 11px; font-weight: bold;
+  color: var(--ink); background: var(--cream);
+  border: 3px solid var(--ink);
+}
+.lightbox-hint {
+  position: absolute; bottom: 18px; left: 50%; z-index: 2;
+  transform: translateX(-50%);
+  padding: 6px 10px; font-size: 10px; text-align: center;
+  color: var(--ink); background: var(--panel);
+  border: 3px solid var(--ink);
+  white-space: nowrap;
+}
+
+@media (max-width: 380px) {
+  .wish-grid { gap: 8px; }
+  .wish-name { font-size: 11px; }
+  .lightbox-hint { font-size: 9px; }
 }
