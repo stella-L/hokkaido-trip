@@ -1264,7 +1264,7 @@ function renderLightbox() {
       <button class="lightbox-btn" type="button" data-close-lb aria-label="사진 닫기">×</button>
     </div>
     <div class="lightbox-stage">
-      <img class="lightbox-img" src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.alt || "사진")}" draggable="false" crossorigin="anonymous" />
+      <img class="lightbox-img" src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.alt || "사진")}" draggable="false" />
     </div>
     ${many ? `
       <button class="lightbox-nav prev" type="button" data-lb-step="-1" aria-label="이전 사진">‹</button>
@@ -1513,7 +1513,7 @@ function wishCardHtml(item) {
       ${item.note ? `<div class="wish-note">${escapeHtml(item.note)}</div>` : ""}
       <div class="wish-meta">
         ${price}
-        <span class="wish-owner ${mine ? "mine" : ""}">${escapeHtml(item.owner?.name || "익명")}</span>
+        <span class="wish-owner ${mine ? "mine" : ""}">✍ ${escapeHtml(item.owner?.name || "익명")}</span>
       </div>
     </div>
     <div class="wish-actions">
@@ -1526,7 +1526,7 @@ function wishCardHtml(item) {
 }
 
 // 지도에서 위치를 찍고 오면 폼이 다시 그려지므로, 입력 중이던 내용을 붙잡아 둔다
-const WISH_FIELDS = ["wishName", "wishPrice", "wishNote", "wishLink", "wishStore", "wishStoreUrl"];
+const WISH_FIELDS = ["wishName", "wishPrice", "wishNote", "wishLink", "wishStore", "wishStoreUrl", "wishOwner"];
 let wishFormDraft = {};
 
 function captureWishForm() {
@@ -1554,6 +1554,7 @@ function wishFormHtml() {
     </div>`).join("");
   const slotsLeft = MAX_WISH_PHOTOS - wishFormPhotos.length;
   const draft = (id) => escapeHtml(wishFormDraft[id] || "");
+  const ownerOptions = wishOwnerOptionsHtml(wishFormDraft.wishOwner || (state.members[0] ? `member:${state.members[0].id}` : me));
 
   return `<form id="wishForm" class="cand-form wish-form">
     <input id="wishName" placeholder="뭘 사고 싶어요? (예: 로이스 생초콜릿)" value="${draft("wishName")}" required />
@@ -1561,6 +1562,7 @@ function wishFormHtml() {
       <input id="wishPrice" type="number" inputmode="numeric" placeholder="예상 가격 (¥)" value="${draft("wishPrice")}" />
       <input id="wishNote" placeholder="메모 (선택)" value="${draft("wishNote")}" />
     </div>
+    <select id="wishOwner" aria-label="기록자">${ownerOptions}</select>
     <input id="wishLink" type="url" placeholder="상품 링크 (선택)" value="${draft("wishLink")}" />
 
     <div class="wish-store-fields">
@@ -1895,17 +1897,19 @@ function openWishDetail(id) {
       </div>
       <div class="wish-detail-info">
         <div class="wish-detail-row"><span>가격</span><b>${item.price ? yen(item.price) : "미정"}${item.bought && item.paid ? ` · 실제 ${yen(item.paid)}` : ""}</b></div>
-        <div class="wish-detail-row"><span>담당</span><b>${escapeHtml(item.owner?.name || "익명")}</b></div>
+        <div class="wish-detail-row"><span>기록자</span><b>${escapeHtml(item.owner?.name || "익명")}</b></div>
         ${store}
         ${item.note ? `<div class="wish-detail-note">${escapeHtml(item.note)}</div>` : ""}
       </div>
       <div class="wish-detail-actions">
+        <button type="button" data-editwish="${item.id}">✏️ 수정</button>
         ${(item.photos || []).length < MAX_WISH_PHOTOS ? `<button type="button" data-addphoto="${item.id}">📷 사진 추가</button>` : ""}
         ${item.link ? `<a href="${escapeHtml(item.link)}" target="_blank">상품 링크 ↗</a>` : ""}
         ${mapLink ? `<a href="${escapeHtml(mapLink)}" target="_blank">지도 ↗</a>` : ""}
       </div>
     </section>`;
   lightbox.querySelectorAll("[data-close-wish-detail]").forEach((b) => { b.onclick = closeLightbox; });
+  lightbox.querySelector("[data-editwish]")?.addEventListener("click", () => openWishEdit(id));
   lightbox.querySelectorAll("[data-detail-photo]").forEach((b) => {
     b.onclick = () => openLightbox(photos, Number(b.dataset.detailPhoto));
   });
@@ -1916,6 +1920,82 @@ function openWishDetail(id) {
       addPhotoToWish(b.dataset.addphoto);
     };
   });
+}
+
+function wishOwnerOptionsHtml(selectedUid) {
+  const choices = state.members.length
+    ? state.members.map((m) => ({ uid: `member:${m.id}`, name: m.name }))
+    : [{ uid: me, name: myName || "나" }];
+  return choices.map((owner) =>
+    `<option value="${escapeHtml(owner.uid)}" ${owner.uid === selectedUid ? "selected" : ""}>${escapeHtml(owner.name)}</option>`
+  ).join("");
+}
+
+function ownerFromChoice(ownerChoice) {
+  const ownerMember = ownerChoice?.startsWith("member:")
+    ? state.members.find((m) => m.id === ownerChoice.slice(7))
+    : null;
+  if (ownerMember) return { uid: ownerChoice, name: ownerMember.name };
+  if (!myName) {
+    myName = prompt("이름을 알려주세요 (물건에 표시돼요)") || "익명";
+    localStorage.setItem("trip_name", myName);
+  }
+  return { uid: me, name: myName || "나" };
+}
+
+function openWishEdit(id) {
+  const item = (state.wishlist || []).find((i) => i.id === id);
+  if (!item) return;
+  lightbox.className = "lightbox open wish-detail-lightbox";
+  lightbox.setAttribute("aria-hidden", "false");
+  lightbox.innerHTML = `
+    <div class="lightbox-backdrop" data-close-wish-detail></div>
+    <section class="wish-detail-panel" role="dialog" aria-modal="true" aria-label="${escapeHtml(item.name)} 수정">
+      <div class="wish-detail-head">
+        <strong>쇼핑 수정</strong>
+        <button class="lightbox-btn" type="button" data-close-wish-detail aria-label="닫기">×</button>
+      </div>
+      <form id="wishEditForm" class="wish-edit-form">
+        <input id="editWishName" value="${escapeHtml(item.name)}" placeholder="뭘 사고 싶어요?" required />
+        <div class="cand-form-row">
+          <input id="editWishPrice" type="number" inputmode="numeric" value="${item.price ?? ""}" placeholder="예상 가격 (¥)" />
+          <select id="editWishOwner" aria-label="기록자">${wishOwnerOptionsHtml(item.owner?.uid || me)}</select>
+        </div>
+        <input id="editWishNote" value="${escapeHtml(item.note || "")}" placeholder="메모 (선택)" />
+        <input id="editWishLink" type="url" value="${escapeHtml(item.link || "")}" placeholder="상품 링크 (선택)" />
+        <input id="editWishStore" value="${escapeHtml(item.store?.name || "")}" placeholder="어디서 살까요? (비우면 미정)" />
+        <input id="editWishStoreUrl" type="url" value="${escapeHtml(item.store?.mapUrl || "")}" placeholder="매장 구글 지도 링크 (선택)" />
+        <div class="wish-detail-actions">
+          <button type="submit">저장하기</button>
+          <button type="button" id="wishEditCancel">취소</button>
+        </div>
+      </form>
+    </section>`;
+  lightbox.querySelectorAll("[data-close-wish-detail]").forEach((b) => { b.onclick = closeLightbox; });
+  lightbox.querySelector("#wishEditCancel").onclick = () => openWishDetail(id);
+  lightbox.querySelector("#wishEditForm").onsubmit = (e) => {
+    e.preventDefault();
+    const storeUrl = lightbox.querySelector("#editWishStoreUrl").value.trim();
+    if (storeUrl && !isUsableMapUrl(storeUrl)) {
+      alert("매장 지도 링크를 확인해 주세요");
+      return;
+    }
+    const storeName = lightbox.querySelector("#editWishStore").value.trim();
+    const coords = parseLatLngFromUrl(storeUrl) || item.store || {};
+    item.name = lightbox.querySelector("#editWishName").value.trim();
+    item.price = lightbox.querySelector("#editWishPrice").value ? Number(lightbox.querySelector("#editWishPrice").value) : null;
+    item.note = lightbox.querySelector("#editWishNote").value.trim();
+    item.link = lightbox.querySelector("#editWishLink").value.trim();
+    item.owner = ownerFromChoice(lightbox.querySelector("#editWishOwner").value);
+    item.store = storeName
+      ? { name: storeName, mapUrl: storeUrl, lat: coords?.lat ?? null, lng: coords?.lng ?? null }
+      : null;
+    commit();
+    renderShop();
+    renderMap();
+    openWishDetail(id);
+    flash("✏️ 쇼핑 수정됨");
+  };
 }
 
 async function addPhotoToWish(id) {
@@ -1992,11 +2072,6 @@ function submitWish() {
   const name = fieldValue("wishName").trim();
   if (!name) return;
 
-  if (!myName) {
-    myName = prompt("이름을 알려주세요 (물건에 표시돼요)") || "익명";
-    localStorage.setItem("trip_name", myName);
-  }
-
   const link = fieldValue("wishLink").trim();
   const storeName = fieldValue("wishStore").trim();
   const storeUrl = fieldValue("wishStoreUrl").trim();
@@ -2010,6 +2085,7 @@ function submitWish() {
   const coords = wishStoreLatLng || fromUrl;
 
   const priceInput = fieldValue("wishPrice");
+  const owner = ownerFromChoice(fieldValue("wishOwner") || me);
   state.wishlist.push({
     id: "w" + Date.now(),
     name,
@@ -2020,7 +2096,7 @@ function submitWish() {
     store: storeName
       ? { name: storeName, mapUrl: storeUrl, lat: coords?.lat ?? null, lng: coords?.lng ?? null }
       : null,
-    owner: { uid: me, name: myName },
+    owner,
     bought: false,
     paid: null,
   });
@@ -2286,6 +2362,10 @@ function compactState(data) {
     wishlist: data?.wishlist || [],
     wishRoute: data?.wishRoute || [],
   };
+}
+
+function sameCompactState(a, b) {
+  return JSON.stringify(compactState(a)) === JSON.stringify(compactState(b));
 }
 
 function dataScore(data) {
@@ -2587,6 +2667,10 @@ async function boot() {
         if (shouldRestoreLocal(localData, d, recovered)) {
           saveRemote(recovered, "merge-local-recovery");
           flash("☁️ 로컬 데이터 복구됨");
+          return;
+        }
+        if (sameCompactState(d, serializable())) {
+          remoteRevision = d._revision || remoteRevision;
           return;
         }
         remoteRevision = d._revision || 0;

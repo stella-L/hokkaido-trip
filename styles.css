@@ -986,6 +986,22 @@ button, input, select { min-width: 0; }
   border: 3px solid var(--ink); box-shadow: 2px 2px 0 rgba(0,0,0,.35);
   cursor: pointer;
 }
+.wish-edit-form {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.wish-edit-form input,
+.wish-edit-form select {
+  width: 100%;
+  padding: 10px;
+  font-family: inherit; font-size: 12px;
+  color: var(--ink); background: var(--panel-2);
+  border: 3px solid var(--ink);
+}
+.wish-edit-form input:focus,
+.wish-edit-form select:focus {
+  outline: none;
+  background: var(--cream);
+}
 
 @media (max-width: 380px) {
   .wish-grid { gap: 8px; }
