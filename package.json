@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "build": "vite build",
+    "build": "vite build && node scripts/build-sites.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
