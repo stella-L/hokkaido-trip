@@ -9,6 +9,7 @@ let state = {
   candidates: structuredClone(CANDIDATES),
   members: structuredClone(MEMBERS),
   expenses: structuredClone(EXPENSES),
+  deletedExpenseIds: [],
   krwRate: JPY_TO_KRW,
   wishlist: structuredClone(WISHLIST),
   wishRoute: structuredClone(WISH_ROUTE),
@@ -506,6 +507,23 @@ const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
 }[ch]));
 
+function deletedExpenseIdSet(data = state) {
+  return new Set(data.deletedExpenseIds || []);
+}
+
+function visibleExpenses(expenses = state.expenses, data = state) {
+  const deleted = deletedExpenseIdSet(data);
+  return (expenses || []).filter((e) => e?.id && !deleted.has(e.id));
+}
+
+function rememberDeletedExpense(id) {
+  if (!id) return;
+  const deleted = new Set(state.deletedExpenseIds || []);
+  deleted.add(id);
+  state.deletedExpenseIds = Array.from(deleted);
+  state.expenses = visibleExpenses(state.expenses);
+}
+
 function payerTotals(expenses) {
   const totals = {};
   expenses.forEach((e) => {
@@ -526,7 +544,7 @@ function payerTotals(expenses) {
 }
 
 function dayExpenseSummary(day) {
-  const expenses = state.expenses.filter((e) => e.dayId === day.id);
+  const expenses = visibleExpenses(state.expenses).filter((e) => e.dayId === day.id);
   const total = expenses.reduce((sum, e) => sum + e.amount, 0);
   const payers = payerTotals(expenses);
   const topAmount = payers.reduce((max, payer) => Math.max(max, payer.amount), 0);
@@ -766,7 +784,7 @@ window.addEventListener("keydown", (e) => {
 function balances() {
   const bal = {};
   state.members.forEach((m) => (bal[m.id] = 0));
-  state.expenses.forEach((e) => {
+  visibleExpenses().forEach((e) => {
     if (bal[e.payerId] === undefined) return;
     bal[e.payerId] += e.amount;
     const parts = expParts(e).filter((id) => bal[id] !== undefined);
@@ -961,7 +979,7 @@ function renderPlan() {
   // 지출: 삭제
   el.querySelectorAll("[data-delexp]").forEach((b) => {
     b.onclick = () => {
-      state.expenses = state.expenses.filter((e) => e.id !== b.dataset.delexp);
+      rememberDeletedExpense(b.dataset.delexp);
       commit(); renderAll();
     };
   });
@@ -2184,7 +2202,8 @@ function toggleBought(id) {
 // ───────────────────────── 정산 탭 ─────────────────────────
 function renderSettle() {
   const el = document.getElementById("tab-settle");
-  const total = state.expenses.reduce((s, e) => s + e.amount, 0);
+  const expenses = visibleExpenses();
+  const total = expenses.reduce((s, e) => s + e.amount, 0);
   const bal = balances();
 
   // 멤버 칩
@@ -2195,7 +2214,7 @@ function renderSettle() {
   // 사람별 낸 돈 / 차액
   const paidBy = {};
   state.members.forEach((m) => (paidBy[m.id] = 0));
-  state.expenses.forEach((e) => { if (paidBy[e.payerId] !== undefined) paidBy[e.payerId] += e.amount; });
+  expenses.forEach((e) => { if (paidBy[e.payerId] !== undefined) paidBy[e.payerId] += e.amount; });
   const topOverallPaid = Math.max(0, ...Object.values(paidBy));
   const rows = state.members.map((m) => {
     const net = Math.round(bal[m.id] || 0);
@@ -2213,7 +2232,7 @@ function renderSettle() {
   const transfers = minTransfers(bal);
   const transferHtml = transfers.length
     ? transfers.map((t) => `<div class="transfer">${memberName(t.from)} <b>→</b> ${memberName(t.to)} <span class="tr-amt">${yen(t.amount)}</span></div>`).join("")
-    : `<div class="exp-hint">${state.expenses.length ? "정산 완료! 보낼 돈이 없어요 🎉" : "지출을 입력하면 정산안이 나와요"}</div>`;
+    : `<div class="exp-hint">${expenses.length ? "정산 완료! 보낼 돈이 없어요 🎉" : "지출을 입력하면 정산안이 나와요"}</div>`;
 
   const dailyRows = state.days.map((day) => {
     const { expenses, total, payers, topPayerIds } = dayExpenseSummary(day);
@@ -2287,7 +2306,7 @@ function renderSettle() {
   el.querySelectorAll("[data-delmem]").forEach((b) => {
     b.onclick = () => {
       const id = b.dataset.delmem;
-      if (state.expenses.some((e) => e.payerId === id)) {
+      if (visibleExpenses().some((e) => e.payerId === id)) {
         if (!confirm("이 멤버가 낸 지출이 있어요. 그래도 삭제할까요? (지출은 남습니다)")) return;
       }
       state.members = state.members.filter((m) => m.id !== id);
@@ -2408,9 +2427,10 @@ let remoteRevision = 0;
 const status = document.getElementById("syncStatus");
 
 function serializable() {
+  state.expenses = visibleExpenses(state.expenses);
   return {
     days: state.days, places: state.places, candidates: state.candidates,
-    members: state.members, expenses: state.expenses, krwRate: state.krwRate,
+    members: state.members, expenses: state.expenses, deletedExpenseIds: state.deletedExpenseIds || [], krwRate: state.krwRate,
     wishlist: state.wishlist, wishRoute: state.wishRoute,
   };
 }
@@ -2421,18 +2441,22 @@ const seedState = {
   candidates: CANDIDATES,
   members: MEMBERS,
   expenses: EXPENSES,
+  deletedExpenseIds: [],
   krwRate: JPY_TO_KRW,
   wishlist: WISHLIST,
   wishRoute: WISH_ROUTE,
 };
 
 function compactState(data) {
+  const deletedExpenseIds = Array.from(new Set(data?.deletedExpenseIds || []));
+  const deleted = new Set(deletedExpenseIds);
   return {
     days: data?.days || [],
     places: data?.places || {},
     candidates: data?.candidates || [],
     members: data?.members || [],
-    expenses: data?.expenses || [],
+    expenses: (data?.expenses || []).filter((e) => e?.id && !deleted.has(e.id)),
+    deletedExpenseIds,
     krwRate: data?.krwRate || JPY_TO_KRW,
     wishlist: data?.wishlist || [],
     wishRoute: data?.wishRoute || [],
@@ -2461,6 +2485,10 @@ function dataScore(data) {
 function dataSummary(data) {
   const d = compactState(data);
   return `후보 ${d.candidates.length}개 · 쇼핑 ${d.wishlist.length}개 · 멤버 ${d.members.length}명 · 지출 ${d.expenses.length}개`;
+}
+
+function mergeDeletedExpenseIds(...sources) {
+  return Array.from(new Set(sources.flatMap((source) => compactState(source).deletedExpenseIds)));
 }
 
 function mergeById(primaryItems, recoveryItems, mergeItem = (_, recovery) => recovery) {
@@ -2503,12 +2531,15 @@ function mergeRecoveryData(localData, remoteData) {
   const local = compactState(localData);
   const remote = compactState(remoteData);
   const remoteHasUserData = hasUserData(remote);
+  const deletedExpenseIds = mergeDeletedExpenseIds(local, remote);
+  const deletedExpenses = new Set(deletedExpenseIds);
   return {
     days: remoteHasUserData ? remote.days : local.days,
     places: remoteHasUserData ? { ...local.places, ...remote.places } : local.places,
     candidates: mergeCandidates(remote.candidates, local.candidates),
     members: mergeById(remote.members, local.members),
-    expenses: mergeById(remote.expenses, local.expenses),
+    expenses: mergeById(remote.expenses, local.expenses).filter((e) => !deletedExpenses.has(e.id)),
+    deletedExpenseIds,
     krwRate: remoteHasUserData ? remote.krwRate : local.krwRate,
     wishlist: mergeById(remote.wishlist, local.wishlist),
     wishRoute: remoteHasUserData && remote.wishRoute.length ? remote.wishRoute : local.wishRoute,
@@ -2529,13 +2560,16 @@ function isDangerousOverwrite(incomingData, remoteData) {
   const incoming = compactState(incomingData);
   const remote = compactState(remoteData);
   if (isSeedLikeData(incoming)) return true;
+  const incomingDeletedExpenses = new Set(incoming.deletedExpenseIds || []);
+  const missingRemoteExpenses = remote.expenses.filter((e) => !incoming.expenses.some((item) => item.id === e.id));
+  const expensesDroppedByDelete = missingRemoteExpenses.length > 0 && missingRemoteExpenses.every((e) => incomingDeletedExpenses.has(e.id));
 
   const clearsCandidates = remote.candidates.length > 0 && incoming.candidates.length === 0;
   const clearsMembers = remote.members.length > 0 && incoming.members.length === 0;
-  const clearsExpenses = remote.expenses.length > 0 && incoming.expenses.length === 0;
+  const clearsExpenses = remote.expenses.length > 0 && incoming.expenses.length === 0 && !expensesDroppedByDelete;
   const dropsCandidates = remote.candidates.length >= 3 && incoming.candidates.length <= Math.floor(remote.candidates.length * 0.4);
   const dropsMembers = remote.members.length >= 2 && incoming.members.length <= Math.floor(remote.members.length * 0.4);
-  const dropsExpenses = remote.expenses.length >= 2 && incoming.expenses.length <= Math.floor(remote.expenses.length * 0.4);
+  const dropsExpenses = remote.expenses.length >= 2 && incoming.expenses.length <= Math.floor(remote.expenses.length * 0.4) && !expensesDroppedByDelete;
   // 위시리스트는 한두 개만 남았을 때 지우는 게 정상이라 "전부 비움"을 차단하지 않는다.
   // 여러 개가 한꺼번에 사라지는 경우만 의심한다.
   const dropsWishlist = remote.wishlist.length >= 3 && incoming.wishlist.length <= Math.floor(remote.wishlist.length * 0.4);
@@ -2658,6 +2692,8 @@ async function boot() {
   // 쇼핑 기능 이전에 저장된 데이터에는 wishlist가 없으므로 빈 배열로 채워둔다
   if (!Array.isArray(state.wishlist)) state.wishlist = [];
   if (!Array.isArray(state.wishRoute)) state.wishRoute = [];
+  if (!Array.isArray(state.deletedExpenseIds)) state.deletedExpenseIds = [];
+  state.expenses = visibleExpenses(state.expenses);
   mergeSeedPlaceDetails();
   renderAll();
 
@@ -2749,12 +2785,14 @@ async function boot() {
           return;
         }
         remoteRevision = d._revision || 0;
-        state.days = d.days; state.places = d.places; state.candidates = d.candidates;
-        if (d.members) state.members = d.members;
-        if (d.expenses) state.expenses = d.expenses;
-        if (d.krwRate) state.krwRate = d.krwRate;
-        if (d.wishlist) state.wishlist = d.wishlist;
-        if (d.wishRoute) state.wishRoute = d.wishRoute;
+        const incoming = compactState(d);
+        state.days = incoming.days; state.places = incoming.places; state.candidates = incoming.candidates;
+        state.members = incoming.members;
+        state.expenses = incoming.expenses;
+        state.deletedExpenseIds = incoming.deletedExpenseIds;
+        state.krwRate = incoming.krwRate;
+        state.wishlist = incoming.wishlist;
+        state.wishRoute = incoming.wishRoute;
         mergeSeedPlaceDetails();
         localStorage.setItem("trip_state", JSON.stringify(serializable()));
         saveShoppingRecoveryBackup(serializable());
