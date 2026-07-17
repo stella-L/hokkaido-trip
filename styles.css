@@ -452,6 +452,49 @@ button, input, select { min-width: 0; }
 .exp-head { font-size: 12px; font-weight: bold; display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .exp-total { font-size: 10px; font-weight: bold; margin-left: auto; }
 .exp-total .won, .settle-total .won { color: #a07fb8; font-weight: normal; }
+.day-pay-summary {
+  display: grid;
+  gap: 6px;
+  padding: 7px;
+  margin-bottom: 7px;
+  background: #fff;
+  border: 2px solid var(--ink);
+}
+.day-pay-total,
+.day-pay-payer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+}
+.day-pay-total {
+  padding-bottom: 5px;
+  border-bottom: 2px dotted #e0d4ec;
+  font-weight: bold;
+}
+.day-pay-total span,
+.day-pay-payer span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.day-pay-total small,
+.day-pay-payer small { color: #a07fb8; font-size: 10px; }
+.day-pay-payers { display: grid; gap: 4px; }
+.day-pay-payer.top-payer {
+  padding: 5px 6px;
+  background: var(--cream);
+  border: 2px solid var(--ink);
+}
+.payer-crown,
+.daily-crown {
+  display: inline-block;
+  margin-right: 5px;
+  padding: 2px 5px;
+  color: var(--ink);
+  background: var(--pink);
+  border: 2px solid var(--ink);
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
 .exp-item {
   display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
   background: #fff; border: 2px solid var(--ink); padding: 6px 8px; margin-bottom: 5px; font-size: 11px;
@@ -508,6 +551,68 @@ button, input, select { min-width: 0; }
 .sr-net { margin-left: auto; font-weight: bold; font-size: 11px; }
 .sr-net.pos { color: #1c9e6f; }
 .sr-net.neg { color: #e0568a; }
+.overall-crown {
+  display: inline-block;
+  margin-right: 5px;
+  padding: 2px 5px;
+  color: var(--ink);
+  background: var(--cream);
+  border: 2px solid var(--ink);
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.daily-settle-list { display: grid; gap: 7px; }
+.daily-settle-row {
+  display: grid;
+  grid-template-columns: minmax(86px, .9fr) minmax(0, 1.4fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: var(--panel-2);
+  border: 2px solid var(--ink);
+  font-size: 11px;
+}
+.daily-settle-row.empty {
+  opacity: .65;
+  background: #fff;
+  border-style: dashed;
+}
+.daily-settle-day { min-width: 0; }
+.daily-settle-day b { display: block; font-size: 12px; }
+.daily-settle-day span {
+  display: block;
+  margin-top: 2px;
+  color: #8a7c9a;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.daily-settle-paid {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  color: #6d5f7b;
+  overflow-wrap: anywhere;
+}
+.daily-payer-line {
+  display: block;
+  line-height: 1.45;
+}
+.daily-payer-line b {
+  color: var(--ink);
+  white-space: nowrap;
+}
+.daily-settle-total {
+  text-align: right;
+  font-weight: bold;
+  white-space: nowrap;
+}
+.daily-settle-total .won {
+  display: block;
+  color: #a07fb8;
+  font-weight: normal;
+  font-size: 10px;
+}
 .transfer {
   display: flex; align-items: center; gap: 8px; font-size: 13px;
   background: var(--panel-2); border: 2px solid var(--ink); padding: 9px 11px; margin-bottom: 7px;
@@ -612,6 +717,16 @@ button, input, select { min-width: 0; }
   .transfer,
   .settle-row {
     flex-wrap: wrap;
+  }
+  .daily-settle-row {
+    grid-template-columns: 1fr;
+  }
+  .daily-settle-total {
+    text-align: left;
+    white-space: normal;
+  }
+  .daily-settle-total .won {
+    display: inline;
   }
   .cand-map {
     flex: 1 1 auto;

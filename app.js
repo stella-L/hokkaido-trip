@@ -506,6 +506,55 @@ const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
 }[ch]));
 
+function payerTotals(expenses) {
+  const totals = {};
+  expenses.forEach((e) => {
+    totals[e.payerId] = (totals[e.payerId] || 0) + e.amount;
+  });
+
+  const ordered = state.members
+    .filter((m) => totals[m.id])
+    .map((m) => ({ id: m.id, name: m.name, amount: totals[m.id] }));
+
+  Object.entries(totals).forEach(([id, amount]) => {
+    if (!state.members.some((m) => m.id === id)) {
+      ordered.push({ id, name: memberName(id), amount });
+    }
+  });
+
+  return ordered;
+}
+
+function dayExpenseSummary(day) {
+  const expenses = state.expenses.filter((e) => e.dayId === day.id);
+  const total = expenses.reduce((sum, e) => sum + e.amount, 0);
+  const payers = payerTotals(expenses);
+  const topAmount = payers.reduce((max, payer) => Math.max(max, payer.amount), 0);
+  const topPayerIds = new Set(payers.filter((payer) => topAmount > 0 && payer.amount === topAmount).map((payer) => payer.id));
+  return { expenses, total, payers, topPayerIds };
+}
+
+function dailyPaymentSummaryHtml(day) {
+  const { expenses, total, payers, topPayerIds } = dayExpenseSummary(day);
+  if (!expenses.length) return "";
+
+  const payerRows = payers.map((payer) => `
+    <div class="day-pay-payer ${topPayerIds.has(payer.id) ? "top-payer" : ""}">
+      <span>${topPayerIds.has(payer.id) ? `<strong class="payer-crown">👑 총무왕</strong>` : ""}${escapeHtml(payer.name)}</span>
+      <b>${yen(payer.amount)}</b>
+      <small>${won(payer.amount)}</small>
+    </div>`).join("");
+
+  return `<div class="day-pay-summary">
+    <div class="day-pay-total">
+      <span>그날 총합</span>
+      <b>${yen(total)}</b>
+      <small>${won(total)}</small>
+    </div>
+    <div class="day-pay-payers">${payerRows}</div>
+  </div>`;
+}
+
 function detailSources(place) {
   if (place.wikiTitle) {
     if (typeof place.wikiTitle === "string") return [{ lang: "ko", title: place.wikiTitle }, { lang: "ja", title: place.wikiTitle }];
@@ -755,7 +804,7 @@ function expenseSection(day) {
   if (!state.members.length) {
     return `<div class="exp-wrap"><div class="exp-hint">💰 지출을 적으려면 <b>정산 탭</b>에서 멤버를 먼저 추가하세요</div></div>`;
   }
-  const list = state.expenses.filter((e) => e.dayId === day.id);
+  const { expenses: list, total: dayTotal } = dayExpenseSummary(day);
   const items = list.map((e) => `
     <div class="exp-item">
       <span class="exp-amt">${yen(e.amount)}</span>
@@ -764,8 +813,8 @@ function expenseSection(day) {
       <button class="exp-del" data-delexp="${e.id}">✕</button>
     </div>`).join("");
 
-  const dayTotal = list.reduce((s, e) => s + e.amount, 0);
   const totalRow = list.length ? `<div class="exp-total">합계 ${yen(dayTotal)} <span class="won">${won(dayTotal)}</span></div>` : "";
+  const dailySummary = dailyPaymentSummaryHtml(day);
 
   let form = "";
   if (expFormDay === day.id) {
@@ -792,6 +841,7 @@ function expenseSection(day) {
 
   return `<div class="exp-wrap">
     <div class="exp-head">💰 지출 ${totalRow}</div>
+    ${dailySummary}
     ${items}
     ${form || `<button class="exp-add" data-day="${day.id}">＋ 지출 추가</button>`}
   </div>`;
@@ -2146,12 +2196,14 @@ function renderSettle() {
   const paidBy = {};
   state.members.forEach((m) => (paidBy[m.id] = 0));
   state.expenses.forEach((e) => { if (paidBy[e.payerId] !== undefined) paidBy[e.payerId] += e.amount; });
+  const topOverallPaid = Math.max(0, ...Object.values(paidBy));
   const rows = state.members.map((m) => {
     const net = Math.round(bal[m.id] || 0);
     const cls = net > 0 ? "pos" : net < 0 ? "neg" : "";
     const label = net > 0 ? `+${yen(net)} 받을 돈` : net < 0 ? `${yen(net)} 낼 돈` : "정산 완료";
+    const isTopOverallPayer = topOverallPaid > 0 && paidBy[m.id] === topOverallPaid;
     return `<div class="settle-row">
-      <span class="sr-name">${m.name}</span>
+      <span class="sr-name">${isTopOverallPayer ? `<strong class="overall-crown">👑👑👑</strong>` : ""}${m.name}</span>
       <span class="sr-paid">낸 돈 ${yen(paidBy[m.id])}</span>
       <span class="sr-net ${cls}">${label}</span>
     </div>`;
@@ -2162,6 +2214,24 @@ function renderSettle() {
   const transferHtml = transfers.length
     ? transfers.map((t) => `<div class="transfer">${memberName(t.from)} <b>→</b> ${memberName(t.to)} <span class="tr-amt">${yen(t.amount)}</span></div>`).join("")
     : `<div class="exp-hint">${state.expenses.length ? "정산 완료! 보낼 돈이 없어요 🎉" : "지출을 입력하면 정산안이 나와요"}</div>`;
+
+  const dailyRows = state.days.map((day) => {
+    const { expenses, total, payers, topPayerIds } = dayExpenseSummary(day);
+    const payerText = payers.length
+      ? payers.map((payer) => {
+          const crown = topPayerIds.has(payer.id) ? `<strong class="daily-crown">👑 ${escapeHtml(payer.name)}</strong>` : escapeHtml(payer.name);
+          return `<span class="daily-payer-line">${crown} <b>${yen(payer.amount)}</b></span>`;
+        }).join("")
+      : "지출 없음";
+    return `<div class="daily-settle-row ${expenses.length ? "" : "empty"}">
+      <div class="daily-settle-day">
+        <b>${escapeHtml(day.date)} ${escapeHtml(day.weekday)}</b>
+        <span>${escapeHtml(day.title)}</span>
+      </div>
+      <div class="daily-settle-paid">${payerText}</div>
+      <div class="daily-settle-total">${yen(total)} <span class="won">${won(total)}</span></div>
+    </div>`;
+  }).join("");
 
   el.innerHTML = `
     <div class="settle-box rate-box">
@@ -2183,6 +2253,11 @@ function renderSettle() {
       <div class="settle-title">📊 요약</div>
       <div class="settle-total">총 지출 <b>${yen(total)}</b> <span class="won">${won(total)}</span></div>
       ${rows || `<div class="exp-hint">아직 지출이 없어요. 일정 탭 각 날짜에서 '지출 추가'</div>`}
+    </div>
+
+    <div class="settle-box">
+      <div class="settle-title">📅 날짜별 결제 합계</div>
+      <div class="daily-settle-list">${dailyRows}</div>
     </div>
 
     <div class="settle-box">
