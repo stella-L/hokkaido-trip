@@ -1,6 +1,7 @@
 import { TYPES, PLACES, DAYS, CANDIDATES, MEMBERS, EXPENSES, JPY_TO_KRW, WISHLIST, WISH_ROUTE } from "./seed-data.js?v=shop-1";
 import { firebaseConfig, TRIP_ID } from "./firebase-config.js";
 import { MAPTILER_KEY, MAP_LANG } from "./maptiler-config.js";
+import { zipSync, strToU8 } from "fflate";
 
 // ───────────────────────── 상태 ─────────────────────────
 let state = {
@@ -815,6 +816,430 @@ function minTransfers(bal) {
     if (cred[j].v === 0) j++;
   }
   return out;
+}
+
+function settlementRows() {
+  const rate = state.krwRate || 9;
+  const daysById = new Map(state.days.map((day, index) => [day.id, { ...day, number: index + 1 }]));
+  const expenses = visibleExpenses();
+  const detailRows = [];
+  const shareRows = [];
+
+  expenses.forEach((expense) => {
+    const day = daysById.get(expense.dayId) || { id: expense.dayId || "", number: "", date: "", weekday: "", title: "" };
+    const parts = expParts(expense).filter((id) => state.members.some((member) => member.id === id));
+    const participantIds = parts.length ? parts : state.members.map((member) => member.id);
+    const participantNames = participantIds.map(memberName);
+    const shareJpy = participantIds.length ? expense.amount / participantIds.length : 0;
+    const dayLabel = day.number ? `${day.number}일차` : day.id || "미지정";
+
+    detailRows.push({
+      expenseId: expense.id,
+      dayLabel,
+      dayId: day.id || "",
+      date: day.date || "",
+      weekday: day.weekday || "",
+      title: day.title || "",
+      memo: expense.memo || "지출",
+      payer: memberName(expense.payerId),
+      amountJpy: expense.amount,
+      amountKrw: Math.round(expense.amount * rate),
+      participants: participantNames.join(", "),
+      participantCount: participantIds.length,
+      shareJpy,
+      shareKrw: Math.round(shareJpy * rate),
+    });
+
+    participantIds.forEach((memberId) => {
+      shareRows.push({
+        dayLabel,
+        dayId: day.id || "",
+        expenseId: expense.id,
+        memo: expense.memo || "지출",
+        member: memberName(memberId),
+        shareJpy,
+        shareKrw: Math.round(shareJpy * rate),
+      });
+    });
+  });
+
+  return { rate, detailRows, shareRows };
+}
+
+function downloadBlob(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+const XLSX_SHEETS = ["설정", "대시보드", "지출상세", "부담상세", "멤버정산", "정산안"];
+
+function xmlEscape(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&apos;",
+  }[ch]));
+}
+
+function columnName(index) {
+  let name = "";
+  while (index > 0) {
+    const mod = (index - 1) % 26;
+    name = String.fromCharCode(65 + mod) + name;
+    index = Math.floor((index - mod) / 26);
+  }
+  return name;
+}
+
+function cellRef(row, col) {
+  return `${columnName(col)}${row}`;
+}
+
+function xlsxCell(row, col, cell) {
+  const ref = cellRef(row, col);
+  const style = cell.style ? ` s="${cell.style}"` : "";
+  if (cell.type === "formula") {
+    return `<c r="${ref}"${style}><f>${xmlEscape(cell.value)}</f></c>`;
+  }
+  if (cell.type === "number") {
+    return `<c r="${ref}"${style}><v>${Number(cell.value) || 0}</v></c>`;
+  }
+  return `<c r="${ref}" t="inlineStr"${style}><is><t>${xmlEscape(cell.value)}</t></is></c>`;
+}
+
+function makeCells(values, style = 0, startCol = 1) {
+  return values.map((value, index) => ({
+    col: startCol + index,
+    type: typeof value === "number" ? "number" : "string",
+    value,
+    style,
+  }));
+}
+
+function formulaCell(col, value, style = 0) {
+  return { col, type: "formula", value, style };
+}
+
+function numberCell(col, value, style = 2) {
+  return { col, type: "number", value, style };
+}
+
+function stringCell(col, value, style = 0) {
+  return { col, type: "string", value, style };
+}
+
+function worksheetXml(rows, { colWidths = [], dataValidation = "", autoFilter = "", hidden = false } = {}) {
+  const maxRow = rows.reduce((max, row) => Math.max(max, row.row), 1);
+  const maxCol = rows.reduce((max, row) => Math.max(max, ...row.cells.map((cell) => cell.col), 1), 1);
+  const cols = colWidths.length
+    ? `<cols>${colWidths.map((width, index) => `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`).join("")}</cols>`
+    : "";
+  const sheetData = rows
+    .sort((a, b) => a.row - b.row)
+    .map((row) => `<row r="${row.row}">${row.cells.sort((a, b) => a.col - b.col).map((cell) => xlsxCell(row.row, cell.col, cell)).join("")}</row>`)
+    .join("");
+  const sheetView = hidden ? "" : `<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <dimension ref="A1:${cellRef(maxRow, maxCol)}"/>
+  ${sheetView}
+  ${cols}
+  <sheetData>${sheetData}</sheetData>
+  ${autoFilter}
+  ${dataValidation}
+</worksheet>`;
+}
+
+function workbookXml() {
+  const sheets = XLSX_SHEETS.map((name, index) => {
+    return `<sheet name="${xmlEscape(name)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`;
+  }).join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>${sheets}</sheets>
+  <calcPr calcId="191029" calcMode="auto" fullCalcOnLoad="1"/>
+</workbook>`;
+}
+
+function workbookRelsXml() {
+  const sheetRels = XLSX_SHEETS.map((_, index) =>
+    `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`
+  ).join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  ${sheetRels}
+  <Relationship Id="rId${XLSX_SHEETS.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`;
+}
+
+function contentTypesXml() {
+  const sheetTypes = XLSX_SHEETS.map((_, index) =>
+    `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`
+  ).join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+  ${sheetTypes}
+</Types>`;
+}
+
+function rootRelsXml() {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`;
+}
+
+function stylesXml() {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0"/></numFmts>
+  <fonts count="2">
+    <font><sz val="11"/><name val="Arial"/></font>
+    <font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Arial"/></font>
+  </fonts>
+  <fills count="3">
+    <fill><patternFill patternType="none"/></fill>
+    <fill><patternFill patternType="gray125"/></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF5B4B6E"/><bgColor indexed="64"/></patternFill></fill>
+  </fills>
+  <borders count="2">
+    <border><left/><right/><top/><bottom/><diagonal/></border>
+    <border><left style="thin"/><right style="thin"/><top style="thin"/><bottom style="thin"/><diagonal/></border>
+  </borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="3">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
+  </cellXfs>
+</styleSheet>`;
+}
+
+function settlementWorkbookSheets() {
+  const { rate, detailRows, shareRows } = settlementRows();
+  const selectedOptions = ["전체", ...state.days.map((_, index) => `${index + 1}일차`)];
+  const generatedAt = new Date();
+  const generatedLabel = generatedAt.toLocaleString("ko-KR");
+  const filenameDate = [
+    generatedAt.getFullYear(),
+    String(generatedAt.getMonth() + 1).padStart(2, "0"),
+    String(generatedAt.getDate()).padStart(2, "0"),
+  ].join("");
+
+  const paidByMember = {};
+  const owedByMember = {};
+  state.members.forEach((member) => {
+    paidByMember[member.id] = 0;
+    owedByMember[member.id] = 0;
+  });
+  visibleExpenses().forEach((expense) => {
+    if (paidByMember[expense.payerId] !== undefined) paidByMember[expense.payerId] += expense.amount;
+    const parts = expParts(expense).filter((id) => owedByMember[id] !== undefined);
+    if (!parts.length) return;
+    const share = expense.amount / parts.length;
+    parts.forEach((id) => {
+      owedByMember[id] += share;
+    });
+  });
+  const memberSummary = state.members.map((member) => {
+    const paidJpy = Math.round(paidByMember[member.id] || 0);
+    const owedJpy = Math.round(owedByMember[member.id] || 0);
+    const netJpy = paidJpy - owedJpy;
+    return {
+      member,
+      paidJpy,
+      owedJpy,
+      netJpy,
+      paidKrw: Math.round(paidJpy * rate),
+      owedKrw: Math.round(owedJpy * rate),
+      netKrw: Math.round(netJpy * rate),
+      status: netJpy > 0 ? "받을 돈" : netJpy < 0 ? "낼 돈" : "정산 완료",
+    };
+  });
+  const totalJpy = detailRows.reduce((sum, row) => sum + row.amountJpy, 0);
+  const totalKrw = Math.round(totalJpy * rate);
+  const transfers = minTransfers(balances());
+
+  const settingsRows = [
+    { row: 1, cells: makeCells(["보기 옵션", "설명"], 1) },
+    { row: 2, cells: makeCells(["전체", "대시보드에서 전체 요약과 일차별 요약을 함께 확인하세요."]) },
+    ...selectedOptions.slice(1).map((value, index) => ({
+      row: index + 3,
+      cells: makeCells([value, "지출상세 시트에서 일차 컬럼으로 필터링해서 볼 수 있어요."]),
+    })),
+  ];
+
+  const dashboardRows = [
+    { row: 1, cells: [stringCell(1, "홋카이도 여행 정산 대시보드", 1)] },
+    { row: 2, cells: makeCells(["생성일", generatedLabel, "", "환율", `¥1 = ₩${rate}`]) },
+    { row: 4, cells: [stringCell(1, "총 지출 JPY"), numberCell(2, totalJpy), stringCell(3, "총 지출 KRW"), numberCell(4, totalKrw), stringCell(5, "지출 건수"), numberCell(6, detailRows.length, 0)] },
+    { row: 7, cells: makeCells(["멤버", "낸 돈 JPY", "부담액 JPY", "순정산 JPY", "상태", "낸 돈 KRW", "부담액 KRW", "순정산 KRW"], 1) },
+  ];
+
+  memberSummary.forEach((summary, index) => {
+    const row = 8 + index;
+    dashboardRows.push({
+      row,
+      cells: [
+        stringCell(1, summary.member.name),
+        numberCell(2, summary.paidJpy),
+        numberCell(3, summary.owedJpy),
+        numberCell(4, summary.netJpy),
+        stringCell(5, summary.status),
+        numberCell(6, summary.paidKrw),
+        numberCell(7, summary.owedKrw),
+        numberCell(8, summary.netKrw),
+      ],
+    });
+  });
+  if (!memberSummary.length) {
+    dashboardRows.push({ row: 8, cells: [stringCell(1, "멤버 없음")] });
+  }
+
+  const summaryStart = Math.max(12 + memberSummary.length, 16);
+  dashboardRows.push({
+    row: summaryStart,
+    cells: makeCells(["일차별 고정 요약", "날짜", "일정", "총 지출 JPY", "총 지출 KRW", ...state.members.map((member) => `${member.name} 낸 돈`)], 1),
+  });
+  state.days.forEach((day, index) => {
+    const row = summaryStart + 1 + index;
+    const dayLabel = `${index + 1}일차`;
+    const cells = [
+      stringCell(1, dayLabel),
+      stringCell(2, `${day.date} ${day.weekday}`),
+      stringCell(3, day.title),
+      numberCell(4, detailRows.filter((item) => item.dayLabel === dayLabel).reduce((sum, item) => sum + item.amountJpy, 0)),
+      numberCell(5, detailRows.filter((item) => item.dayLabel === dayLabel).reduce((sum, item) => sum + item.amountKrw, 0)),
+    ];
+    state.members.forEach((member, memberIndex) => {
+      const paid = detailRows
+        .filter((item) => item.dayLabel === dayLabel && item.payer === member.name)
+        .reduce((sum, item) => sum + item.amountJpy, 0);
+      cells.push(numberCell(6 + memberIndex, paid));
+    });
+    dashboardRows.push({ row, cells });
+  });
+
+  const transferStart = summaryStart + state.days.length + 3;
+  dashboardRows.push(
+    { row: transferStart, cells: makeCells(["최종 송금안", "받는 사람", "금액 JPY", "금액 KRW"], 1) },
+    ...(transfers.length
+      ? transfers.map((transfer, index) => ({
+          row: transferStart + 1 + index,
+          cells: [
+            stringCell(1, memberName(transfer.from)),
+            stringCell(2, memberName(transfer.to)),
+            numberCell(3, transfer.amount),
+            numberCell(4, Math.round(transfer.amount * rate)),
+          ],
+        }))
+      : [{ row: transferStart + 1, cells: makeCells(["송금 없음", "정산 완료", 0, 0]) }])
+  );
+
+  const detailHeader = ["일차", "일차ID", "날짜", "요일", "일정", "메모", "지출ID", "결제자", "금액 JPY", "금액 KRW", "나눠 낼 사람", "인원수", "1인 부담 JPY", "1인 부담 KRW"];
+  const detailSheetRows = [{ row: 1, cells: makeCells(detailHeader, 1) }];
+  detailRows.forEach((item, index) => {
+    detailSheetRows.push({
+      row: index + 2,
+      cells: [
+        stringCell(1, item.dayLabel), stringCell(2, item.dayId), stringCell(3, item.date), stringCell(4, item.weekday),
+        stringCell(5, item.title), stringCell(6, item.memo), stringCell(7, item.expenseId), stringCell(8, item.payer),
+        numberCell(9, item.amountJpy), numberCell(10, item.amountKrw), stringCell(11, item.participants),
+        numberCell(12, item.participantCount, 0), numberCell(13, item.shareJpy), numberCell(14, item.shareKrw),
+      ],
+    });
+  });
+  if (!detailRows.length) {
+    detailSheetRows.push({ row: 2, cells: makeCells(["지출 없음"]) });
+  }
+
+  const shareSheetRows = [{ row: 1, cells: makeCells(["일차", "일차ID", "지출ID", "메모", "부담자", "부담액 JPY", "부담액 KRW"], 1) }];
+  shareRows.forEach((item, index) => {
+    shareSheetRows.push({
+      row: index + 2,
+      cells: [
+        stringCell(1, item.dayLabel), stringCell(2, item.dayId), stringCell(3, item.expenseId), stringCell(4, item.memo),
+        stringCell(5, item.member), numberCell(6, item.shareJpy), numberCell(7, item.shareKrw),
+      ],
+    });
+  });
+  if (!shareRows.length) {
+    shareSheetRows.push({ row: 2, cells: makeCells(["부담 내역 없음"]) });
+  }
+
+  const memberRows = [{ row: 1, cells: makeCells(["멤버", "낸 돈 JPY", "부담액 JPY", "순정산 JPY", "낸 돈 KRW", "부담액 KRW", "순정산 KRW"], 1) }];
+  memberSummary.forEach((summary, index) => {
+    const row = index + 2;
+    memberRows.push({
+      row,
+      cells: [
+        stringCell(1, summary.member.name),
+        numberCell(2, summary.paidJpy),
+        numberCell(3, summary.owedJpy),
+        numberCell(4, summary.netJpy),
+        numberCell(5, summary.paidKrw),
+        numberCell(6, summary.owedKrw),
+        numberCell(7, summary.netKrw),
+      ],
+    });
+  });
+  if (!memberSummary.length) {
+    memberRows.push({ row: 2, cells: makeCells(["멤버 없음"]) });
+  }
+
+  const transferRows = [{ row: 1, cells: makeCells(["송금자", "받는 사람", "금액 JPY", "금액 KRW"], 1) }];
+  transfers.forEach((transfer, index) => {
+    transferRows.push({
+      row: index + 2,
+      cells: [
+        stringCell(1, memberName(transfer.from)),
+        stringCell(2, memberName(transfer.to)),
+        numberCell(3, transfer.amount),
+        numberCell(4, Math.round(transfer.amount * rate)),
+      ],
+    });
+  });
+  if (!transfers.length) {
+    transferRows.push({ row: 2, cells: makeCells(["송금 없음", "정산 완료", 0, 0]) });
+  }
+
+  return {
+    filenameDate,
+    sheets: [
+      worksheetXml(settingsRows, { colWidths: [14, 54] }),
+      worksheetXml(dashboardRows, { colWidths: [18, 16, 16, 16, 18, 16, 16, 16, 16, 16, 16] }),
+      worksheetXml(detailSheetRows, { colWidths: [10, 10, 10, 8, 24, 24, 18, 14, 14, 14, 34, 10, 16, 16], autoFilter: `<autoFilter ref="A1:N1"/>` }),
+      worksheetXml(shareSheetRows, { colWidths: [10, 10, 18, 24, 14, 14, 14], autoFilter: `<autoFilter ref="A1:G1"/>` }),
+      worksheetXml(memberRows, { colWidths: [16, 14, 14, 14, 14, 14, 14] }),
+      worksheetXml(transferRows, { colWidths: [16, 16, 14, 14] }),
+    ],
+  };
+}
+
+async function exportSettlementWorkbook() {
+  const { filenameDate, sheets } = settlementWorkbookSheets();
+  const files = {
+    "[Content_Types].xml": strToU8(contentTypesXml()),
+    "_rels/.rels": strToU8(rootRelsXml()),
+    "xl/workbook.xml": strToU8(workbookXml()),
+    "xl/_rels/workbook.xml.rels": strToU8(workbookRelsXml()),
+    "xl/styles.xml": strToU8(stylesXml()),
+  };
+  sheets.forEach((sheet, index) => {
+    files[`xl/worksheets/sheet${index + 1}.xml`] = strToU8(sheet);
+  });
+  const zipped = zipSync(files);
+  downloadBlob(`hokkaido-trip-settlement-${filenameDate}.xlsx`, new Blob([zipped], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  }));
 }
 
 // 날짜 카드용 지출 섹션
@@ -2288,10 +2713,11 @@ function renderSettle() {
       <div class="settle-title">🛡️ 데이터 백업</div>
       <div class="backup-summary">${dataSummary(state)}</div>
       <div class="backup-actions">
+        <button id="exportSettlementExcel" type="button">엑셀 정산표 저장</button>
         <button id="exportBackup" type="button">백업 파일 저장</button>
         <button id="restoreLocalBackup" type="button">로컬 백업 복구</button>
       </div>
-      <div class="rate-hint">저장할 때 원격 백업도 자동으로 남고, 빈 데이터 덮어쓰기는 차단돼요.</div>
+      <div class="rate-hint">엑셀 파일은 구글시트에서 열면 드롭다운으로 전체/일차별 정산을 확인할 수 있어요.</div>
     </div>`;
 
   // 멤버 추가
@@ -2322,6 +2748,23 @@ function renderSettle() {
   el.querySelector("#exportBackup").onclick = () => {
     downloadJson(`hokkaido-trip-${Date.now()}.json`, serializable());
     flash("💾 백업 파일 저장됨");
+  };
+  el.querySelector("#exportSettlementExcel").onclick = async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    const originalText = button.textContent;
+    button.textContent = "엑셀 만드는 중...";
+    try {
+      await exportSettlementWorkbook();
+      flash("📊 엑셀 정산표 저장됨");
+    } catch (err) {
+      console.error(err);
+      alert("엑셀 정산표를 만드는 중 문제가 생겼어요. 잠시 후 다시 시도해 주세요.");
+      flash("⚠️ 엑셀 저장 실패");
+    } finally {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
   };
   el.querySelector("#restoreLocalBackup").onclick = async () => {
     const recovery = loadRecoveryBackup();
